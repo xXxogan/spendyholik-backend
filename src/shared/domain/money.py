@@ -13,6 +13,9 @@ DECIMAL_PLACES = 2
 MINOR_UNIT_FACTOR = Decimal(10) ** DECIMAL_PLACES
 _QUANTUM = Decimal("0.01")
 
+#: Default base currency for new users/profiles.
+DEFAULT_CURRENCY = "RUB"
+
 
 @dataclass(frozen=True, slots=True)
 class Money:
