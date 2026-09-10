@@ -1,0 +1,53 @@
+"""Unified DRF exception handler.
+
+Translates domain exceptions and DRF errors into a single API error shape:
+``{"code": "...", "detail": "...", "errors": {...}}``.
+"""
+
+from __future__ import annotations
+
+from django.http import Http404
+from rest_framework import exceptions as drf_exceptions
+from rest_framework.response import Response
+from rest_framework.views import exception_handler as drf_exception_handler
+from rest_framework.views import set_rollback
+
+from shared.exceptions import DomainError
+
+
+def _error_response(code: str, detail: str, errors: dict | None = None, status: int = 400) -> Response:
+    return Response(
+        {"code": code, "detail": detail, "errors": errors or {}},
+        status=status,
+    )
+
+
+def exception_handler(exc: Exception, context: dict) -> Response | None:
+    if isinstance(exc, DomainError):
+        set_rollback()
+        return _error_response(exc.code, exc.detail, status=exc.http_status)
+
+    if isinstance(exc, Http404):
+        set_rollback()
+        return _error_response("not_found", "Not found.", status=404)
+
+    response = drf_exception_handler(exc, context)
+    if response is None:
+        return None  # unhandled → 500
+
+    # Re-wrap DRF's own responses into the unified shape.
+    set_rollback()
+    data = response.data
+    if isinstance(data, dict):
+        detail = data.get("detail", "Request failed.")
+        errors = {k: v for k, v in data.items() if k != "detail"}
+        if isinstance(detail, dict):
+            # e.g. ValidationError with field-level detail
+            errors = dict(detail)
+            detail = "Validation failed."
+        return _error_response("validation_error", detail, errors, status=response.status_code)
+
+    if isinstance(data, list):
+        return _error_response("validation_error", "Validation failed.", {"non_field": data}, status=response.status_code)
+
+    return _error_response("error", str(data), status=response.status_code)

@@ -1,0 +1,8 @@
+from django.apps import AppConfig
+
+
+class RecurringConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "recurring"
+    label = "recurring"
+    verbose_name = "recurring"

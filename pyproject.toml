@@ -1,0 +1,89 @@
+[project]
+name = "spendyholik-backend"
+version = "0.1.0"
+description = "REST API backend for the «Баланс» personal finance app (clean architecture)"
+readme = "README.md"
+authors = [
+    { name = "Xogan", email = "yarok2005@mail.ru" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "django>=6.0,<7",
+    "djangorestframework>=3.17",
+    "djangorestframework-simplejwt>=5.5",
+    "social-auth-app-django>=5.4",
+    "psycopg[binary]>=3.2",
+    "redis>=6.0",
+    "celery>=5.5",
+    "django-celery-beat>=2.7",
+    "pydantic>=2.10",
+    "drf-spectacular>=0.28",
+    "django-cors-headers>=4.6",
+    "structlog>=25.1",
+    "django-prometheus>=2.4",
+    "django-environ>=0.12",
+    "django-ratelimit>=4.1",
+    "pillow>=11.0",
+    "gunicorn>=23.0",
+    "uvicorn[standard]>=0.34",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.10",
+    "pytest-cov>=6.0",
+    "pytest-sugar>=1.0",
+    "factory-boy>=3.3",
+    "faker>=35.0",
+    "ruff>=0.9",
+    "black>=25.1",
+    "pytest-asyncio>=0.25",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q --strict-markers --tb=short"
+markers = [
+    "unit: unit tests without database",
+    "integration: repository/infrastructure tests",
+    "api: interface/API contract tests",
+    "e2e: end-to-end scenarios",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:django.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "N"]
+ignore = ["B008"]
+
+[tool.black]
+line-length = 100
+target-version = ["py314"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/migrations/*"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
