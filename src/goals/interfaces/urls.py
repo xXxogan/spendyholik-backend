@@ -1,5 +1,19 @@
 """URL routes for the goals module (relative to /api/v1/)."""
 
+from django.urls import path
+
+from goals.interfaces.views import (
+    GoalContributeView,
+    GoalDetailView,
+    GoalForecastView,
+    GoalListCreateView,
+)
+
 app_name = "goals"
 
-urlpatterns = []  # type: ignore[var-annotated]  # populated by the interfaces layer
+urlpatterns = [
+    path("goals/", GoalListCreateView.as_view(), name="goal-list"),
+    path("goals/<uuid:pk>/", GoalDetailView.as_view(), name="goal-detail"),
+    path("goals/<uuid:pk>/contribute/", GoalContributeView.as_view(), name="goal-contribute"),
+    path("goals/<uuid:pk>/forecast/", GoalForecastView.as_view(), name="goal-forecast"),
+]

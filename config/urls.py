@@ -4,6 +4,8 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
+from core.interfaces.views import HealthView, ReadyView
+
 api_v1 = [
     path("", include("accounts.interfaces.urls")),
     path("", include("finances.interfaces.urls")),
@@ -12,7 +14,6 @@ api_v1 = [
     path("", include("debts.interfaces.urls")),
     path("", include("analytics.interfaces.urls")),
     path("", include("notifications.interfaces.urls")),
-    path("", include("core.interfaces.urls")),
 ]
 
 urlpatterns = [
@@ -20,5 +21,7 @@ urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/v1/", include(api_v1)),
+    path("health/", HealthView.as_view(), name="health"),
+    path("ready/", ReadyView.as_view(), name="ready"),
     path("", include("django_prometheus.urls")),
 ]
