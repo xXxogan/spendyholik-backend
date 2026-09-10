@@ -86,6 +86,7 @@ class Transaction:
     note: str = ""
     receipt_id: UUID | None = None
     transfer_to_account_id: UUID | None = None
+    recurring_source_id: UUID | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:

@@ -278,6 +278,37 @@ class InMemoryTransactionRepository(TransactionRepository):
         next_cursor = f"{page[-1].date}_{page[-1].id}" if len(items) > limit else None
         return page, next_cursor
 
+    def exists_for_source(self, user_id: UUID, recurring_id: UUID, date: date) -> bool:
+        return any(
+            t.user_id == user_id and t.recurring_source_id == recurring_id and t.date == date
+            for t in self._by_id.values()
+        )
+
+    def sum_by_category(self, user_id, *, type, date_from=None, date_to=None):
+        result: dict[UUID, Money] = {}
+        for t in self._by_id.values():
+            if t.user_id != user_id or t.type is not type or t.category_id is None:
+                continue
+            if date_from is not None and t.date < date_from:
+                continue
+            if date_to is not None and t.date > date_to:
+                continue
+            result[t.category_id] = result.get(t.category_id, Money.zero(t.amount.currency)) + t.amount
+        return result
+
+    def monthly_totals(self, user_id, *, type, date_from=None, date_to=None):
+        buckets: dict[str, Money] = {}
+        for t in self._by_id.values():
+            if t.user_id != user_id or t.type is not type:
+                continue
+            if date_from is not None and t.date < date_from:
+                continue
+            if date_to is not None and t.date > date_to:
+                continue
+            key = t.date.replace(day=1)
+            buckets[str(key)] = buckets.get(str(key), Money.zero(t.amount.currency)) + t.amount
+        return [(date.fromisoformat(k), v) for k, v in sorted(buckets.items())]
+
     def total_amount(self, user_id, *, type=None, account_id=None, category_id=None,
                      date_from=None, date_to=None):
         items = [t for t in self._by_id.values() if t.user_id == user_id]
@@ -346,3 +377,154 @@ class StubExchangeRateProvider(ExchangeRateProvider):
 
     def get_rate(self, base, target, on=None):
         return self._rates.get((base.value, target.value))
+
+
+class FakeClock:
+    """Deterministic clock for tests (accepts a datetime or a date)."""
+
+    def __init__(self, now: datetime | date | None = None) -> None:
+        if now is None:
+            now = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+        elif isinstance(now, date) and not isinstance(now, datetime):
+            now = datetime.combine(now, datetime.min.time(), tzinfo=timezone.utc)
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+
+class InMemoryGoalRepository:
+    def __init__(self) -> None:
+        self._by_id: dict[UUID, "object"] = {}
+
+    def add(self, goal):
+        self._by_id[goal.id] = goal
+        return goal
+
+    def get_by_id(self, goal_id, user_id):
+        goal = self._by_id.get(goal_id)
+        return goal if goal and goal.user_id == user_id else None
+
+    def list_for_user(self, user_id):
+        return [g for g in self._by_id.values() if g.user_id == user_id]
+
+    def update(self, goal):
+        self._by_id[goal.id] = goal
+        return goal
+
+    def delete(self, goal_id, user_id):
+        self._by_id.pop(goal_id, None)
+
+
+class InMemoryGoalContributionRepository:
+    def __init__(self) -> None:
+        self._by_goal: dict[UUID, list] = {}
+
+    def add(self, contribution):
+        self._by_goal.setdefault(contribution.goal_id, []).append(contribution)
+        return contribution
+
+    def list_for_goal(self, goal_id):
+        return list(self._by_goal.get(goal_id, []))
+
+    def sum_for_goal(self, goal_id):
+        items = self._by_goal.get(goal_id, [])
+        if not items:
+            return Money.zero("RUB")
+        return sum((c.amount for c in items), Money.zero(items[0].amount.currency))
+
+
+class InMemoryRecurringTransactionRepository:
+    def __init__(self) -> None:
+        self._by_id: dict[UUID, "object"] = {}
+
+    def add(self, recurring):
+        self._by_id[recurring.id] = recurring
+        return recurring
+
+    def get_by_id(self, recurring_id, user_id):
+        r = self._by_id.get(recurring_id)
+        return r if r and r.user_id == user_id else None
+
+    def list_for_user(self, user_id):
+        return [r for r in self._by_id.values() if r.user_id == user_id]
+
+    def update(self, recurring):
+        self._by_id[recurring.id] = recurring
+        return recurring
+
+    def delete(self, recurring_id, user_id):
+        self._by_id.pop(recurring_id, None)
+
+    def list_due(self, on):
+        return [r for r in self._by_id.values() if r.next_run <= on]
+
+
+class InMemoryDebtRepository:
+    def __init__(self) -> None:
+        self._by_id: dict[UUID, "object"] = {}
+
+    def add(self, debt):
+        self._by_id[debt.id] = debt
+        return debt
+
+    def get_by_id(self, debt_id, user_id):
+        d = self._by_id.get(debt_id)
+        return d if d and d.user_id == user_id else None
+
+    def list_for_user(self, user_id):
+        return [d for d in self._by_id.values() if d.user_id == user_id]
+
+    def update(self, debt):
+        self._by_id[debt.id] = debt
+        return debt
+
+    def delete(self, debt_id, user_id):
+        self._by_id.pop(debt_id, None)
+
+
+class InMemoryDebtPaymentRepository:
+    def __init__(self) -> None:
+        self._by_debt: dict[UUID, list] = {}
+
+    def add(self, payment):
+        self._by_debt.setdefault(payment.debt_id, []).append(payment)
+        return payment
+
+    def list_for_debt(self, debt_id):
+        return list(self._by_debt.get(debt_id, []))
+
+    def sum_for_debt(self, debt_id):
+        items = self._by_debt.get(debt_id, [])
+        if not items:
+            return Money.zero("RUB")
+        return sum((p.amount for p in items), Money.zero(items[0].amount.currency))
+
+
+class InMemoryNotificationRepository:
+    def __init__(self) -> None:
+        self._by_id: dict[UUID, "object"] = {}
+
+    def add(self, notification):
+        self._by_id[notification.id] = notification
+        return notification
+
+    def list_for_user(self, user_id):
+        return [n for n in self._by_id.values() if n.user_id == user_id]
+
+    def unread_count(self, user_id):
+        return sum(1 for n in self._by_id.values() if n.user_id == user_id and not n.is_read)
+
+    def mark_read(self, user_id, notification_id):
+        n = self._by_id.get(notification_id)
+        if n and n.user_id == user_id:
+            self._by_id[notification_id] = type(n)(
+                user_id=n.user_id, type=n.type, title=n.title, body=n.body, is_read=True, id=n.id
+            )
+
+    def mark_all_read(self, user_id):
+        for nid, n in list(self._by_id.items()):
+            if n.user_id == user_id and not n.is_read:
+                self._by_id[nid] = type(n)(
+                    user_id=n.user_id, type=n.type, title=n.title, body=n.body, is_read=True, id=n.id
+                )

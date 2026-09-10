@@ -1,0 +1,17 @@
+"""DTOs for the notifications application layer."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import UUID
+
+from notifications.domain.enums import NotificationType
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationDTO:
+    id: UUID
+    type: NotificationType
+    title: str
+    body: str
+    is_read: bool

@@ -81,6 +81,9 @@ class TransactionRepository(ABC):
     ) -> tuple[list[Transaction], str | None]: ...
 
     @abstractmethod
+    def exists_for_source(self, user_id: UUID, recurring_id: UUID, date: date) -> bool: ...
+
+    @abstractmethod
     def total_amount(
         self,
         user_id: UUID,
@@ -91,6 +94,26 @@ class TransactionRepository(ABC):
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> Money: ...
+
+    @abstractmethod
+    def sum_by_category(
+        self,
+        user_id: UUID,
+        *,
+        type: TransactionType,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict[UUID, Money]: ...
+
+    @abstractmethod
+    def monthly_totals(
+        self,
+        user_id: UUID,
+        *,
+        type: TransactionType,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[tuple[date, Money]]: ...
 
 
 class BudgetRepository(ABC):
