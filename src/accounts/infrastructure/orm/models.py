@@ -67,3 +67,23 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def display_name(self) -> str:
         return self.first_name or self.email.split("@", 1)[0]
+
+
+class Profile(models.Model):
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="profile", primary_key=True
+    )
+    base_currency = models.CharField(max_length=3, default="RUB")
+    theme = models.CharField(max_length=10, default="auto")
+    onboarded = models.BooleanField(default=False)
+    notify_budget = models.BooleanField(default=True)
+    notify_goal = models.BooleanField(default=True)
+    notify_recurring = models.BooleanField(default=True)
+    notify_weekly_report = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "profile"
+        verbose_name_plural = "profiles"
+
+    def __str__(self) -> str:
+        return f"Profile({self.user_id})"

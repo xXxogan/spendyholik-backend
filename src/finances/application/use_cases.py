@@ -516,3 +516,13 @@ class GetBudgetDetail:
         if budget is None:
             raise BudgetNotFoundError(budget_id)
         return _budget_dto(budget)
+
+
+class DeleteBudget:
+    def __init__(self, budgets: BudgetRepository) -> None:
+        self._budgets = budgets
+
+    def execute(self, user_id: UUID, budget_id: UUID) -> None:
+        if self._budgets.get_by_id(budget_id, user_id) is None:
+            raise BudgetNotFoundError(budget_id)
+        self._budgets.delete(budget_id, user_id)

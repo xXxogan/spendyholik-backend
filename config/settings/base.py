@@ -19,7 +19,10 @@ env = environ.Env(
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
-SECRET_KEY = env("SECRET_KEY", default="insecure-dev-only-secret-key")
+SECRET_KEY = env(
+    "SECRET_KEY",
+    default="insecure-dev-only-secret-key-0123456789abcdef0123456789abcdef",
+)
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 

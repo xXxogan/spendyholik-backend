@@ -93,7 +93,7 @@ class TransactionRepository(ABC):
         category_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> Money: ...
+    ) -> Money | None: ...
 
     @abstractmethod
     def sum_by_category(

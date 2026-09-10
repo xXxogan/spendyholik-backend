@@ -31,6 +31,15 @@ def exception_handler(exc: Exception, context: dict) -> Response | None:
         set_rollback()
         return _error_response("not_found", "Not found.", status=404)
 
+    # Validation / parse errors are "unprocessable" (422), not generic 400.
+    if isinstance(exc, (drf_exceptions.ValidationError, drf_exceptions.ParseError)):
+        set_rollback()
+        detail = getattr(exc, "detail", "Validation failed.")
+        errors = {}
+        if isinstance(detail, dict):
+            errors = {k: v for k, v in detail.items() if k != "detail"}
+        return _error_response("validation_error", "Validation failed.", errors, status=422)
+
     response = drf_exception_handler(exc, context)
     if response is None:
         return None  # unhandled → 500
