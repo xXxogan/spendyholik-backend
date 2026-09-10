@@ -1,0 +1,12 @@
+"""Domain exceptions for the recurring bounded context."""
+
+from __future__ import annotations
+
+from shared.exceptions import EntityNotFoundError
+
+
+class RecurringTransactionNotFoundError(EntityNotFoundError):
+    code = "recurring_not_found"
+
+    def __init__(self, identifier: object | None = None) -> None:
+        super().__init__("RecurringTransaction", identifier)
