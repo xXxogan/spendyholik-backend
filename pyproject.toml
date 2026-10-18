@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "REST API backend for the «SpendyHolik» personal finance app (clean architecture)"
 readme = "README.md"
 authors = [{ name = "Xogan" }]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     # django-celery-beat 2.9 caps Django at <6.1.

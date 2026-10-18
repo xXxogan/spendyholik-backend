@@ -66,3 +66,7 @@ Kubernetes (k3s) + Helm-чарт `deploy/charts/spendyholik-backend` (api, worke
 beat, PostgreSQL, Redis, миграции, Traefik ingress, TLS через cert-manager).
 После зелёного CI в `main` GitHub Actions собирает образ в GHCR и обновляет
 сервер по SSH. Пошаговая инструкция — [DEPLOY.md](DEPLOY.md).
+
+## Лицензия
+
+[MIT](LICENSE) © Xogan
