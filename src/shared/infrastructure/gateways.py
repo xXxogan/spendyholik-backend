@@ -55,5 +55,7 @@ class StubExchangeRateProvider(ExchangeRateProvider):
     def __init__(self, rates: dict[tuple[str, str], Decimal] | None = None) -> None:
         self._rates = rates or {}
 
-    def get_rate(self, base: CurrencyCode, target: CurrencyCode, on: date | None = None) -> Decimal | None:
+    def get_rate(
+        self, base: CurrencyCode, target: CurrencyCode, on: date | None = None
+    ) -> Decimal | None:
         return self._rates.get((base.value, target.value))

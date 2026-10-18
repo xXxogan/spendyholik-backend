@@ -19,18 +19,25 @@ from goals.application.dto import (
 from goals.application.ports import GoalContributionRepository, GoalRepository
 from goals.domain.entities import Goal, GoalContribution
 from goals.domain.exceptions import GoalNotFoundError
+from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.clock import Clock
 from shared.domain.money import Money
 from shared.exceptions import ValidationError
 
 
-def _current_amount(goal: Goal, contributions_sum: Money) -> Money:
-    return goal.initial_amount + contributions_sum
+def _current_amount(goal: Goal, contributions_sum: Money | None) -> Money:
+    return (
+        goal.initial_amount
+        if contributions_sum is None
+        else goal.initial_amount + contributions_sum
+    )
 
 
 def _goal_dto(goal: Goal, current: Money) -> GoalDTO:
-    progress = 0.0 if goal.target_amount.is_zero() else float(current.amount / goal.target_amount.amount)
+    progress = (
+        0.0 if goal.target_amount.is_zero() else float(current.amount / goal.target_amount.amount)
+    )
     return GoalDTO(
         id=goal.id,
         name=goal.name,
@@ -78,20 +85,17 @@ class UpdateGoal:
         goal = self._goals.get_by_id(goal_id, user_id)
         if goal is None:
             raise GoalNotFoundError(goal_id)
-        updated = Goal(
-            id=goal.id,
-            user_id=user_id,
-            name=data.name if data.name is not None else goal.name,
-            target_amount=(
-                goal.target_amount
-                if data.target_amount_minor is None
-                else Money.from_minor_units(data.target_amount_minor, goal.target_amount.currency)
-            ),
-            initial_amount=goal.initial_amount,
-            account_id=goal.account_id,
-            deadline=goal.deadline if data.deadline is None else data.deadline,
-            icon=data.icon if data.icon is not None else goal.icon,
-            color=data.color if data.color is not None else goal.color,
+        currency = goal.target_amount.currency
+        updated = apply_patch(
+            goal,
+            data,
+            fields={
+                "target_amount_minor": (
+                    "target_amount",
+                    lambda m: Money.from_minor_units(m, currency),
+                ),
+            },
+            nullable={"deadline"},
         )
         saved = self._goals.update(updated)
         return _goal_dto(saved, _current_amount(saved, self._contributions.sum_for_goal(goal_id)))
@@ -103,10 +107,9 @@ class ListGoals:
         self._contributions = contributions
 
     def execute(self, user_id: UUID) -> list[GoalDTO]:
-        return [
-            _goal_dto(g, _current_amount(g, self._contributions.sum_for_goal(g.id)))
-            for g in self._goals.list_for_user(user_id)
-        ]
+        goals = self._goals.list_for_user(user_id)
+        sums = self._contributions.sums_for_goals([g.id for g in goals])
+        return [_goal_dto(g, _current_amount(g, sums.get(g.id))) for g in goals]
 
 
 class GetGoalDetail:
@@ -134,7 +137,9 @@ class ContributeToGoal:
         self._accounts = accounts
         self._uow = uow
 
-    def execute(self, user_id: UUID, goal_id: UUID, data: ContributeToGoalInput) -> GoalContributionDTO:
+    def execute(
+        self, user_id: UUID, goal_id: UUID, data: ContributeToGoalInput
+    ) -> GoalContributionDTO:
         goal = self._goals.get_by_id(goal_id, user_id)
         if goal is None:
             raise GoalNotFoundError(goal_id)
@@ -198,3 +203,12 @@ class ForecastGoal:
             remaining=remaining,
             projected_completion=self._clock.now().date() + timedelta(days=days_needed),
         )
+
+
+class DeleteGoal:
+    def __init__(self, goals: GoalRepository) -> None:
+        self._goals = goals
+
+    def execute(self, user_id: UUID, goal_id: UUID) -> None:
+        if not self._goals.delete(goal_id, user_id):
+            raise GoalNotFoundError(goal_id)

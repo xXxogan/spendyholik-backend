@@ -35,3 +35,8 @@ media/*
 .env
 .env.*
 !.env.example
+
+# Helm secret values (see DEPLOY.md)
+secrets.yaml
+*.secret.yaml
+values-server.yaml

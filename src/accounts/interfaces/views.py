@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID
-
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 
@@ -11,16 +10,14 @@ from accounts.application.dto import (
     ChangePasswordInput,
     ConfirmPasswordResetInput,
     LoginUserInput,
+    RefreshTokenInput,
     RegisterUserInput,
     RequestPasswordResetInput,
-    RefreshTokenInput,
     SocialLoginInput,
     UpdateProfileInput,
 )
-from accounts.application.use_cases import LogoutUser, RefreshToken
 from core.interfaces.api import BaseAPIView, created, ok
 from core.interfaces.deps import container
-from core.interfaces.renderers import CURRENCY_SYMBOLS
 
 
 def _auth_view(result) -> dict:
@@ -53,6 +50,7 @@ def _profile_view(dto) -> dict:
 class RegisterView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=RegisterUserInput)
     def post(self, request: Request):
         data = self.parse(RegisterUserInput, request.data)
         return created(_auth_view(container.register_user().execute(data)))
@@ -61,6 +59,7 @@ class RegisterView(BaseAPIView):
 class LoginView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=LoginUserInput)
     def post(self, request: Request):
         data = self.parse(LoginUserInput, request.data)
         return ok(_auth_view(container.login_user().execute(data)))
@@ -69,6 +68,7 @@ class LoginView(BaseAPIView):
 class RefreshTokenView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=RefreshTokenInput)
     def post(self, request: Request):
         data = self.parse(RefreshTokenInput, request.data)
         pair = container.refresh_token().execute(data)
@@ -85,6 +85,7 @@ class RefreshTokenView(BaseAPIView):
 class LogoutView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=RefreshTokenInput)
     def post(self, request: Request):
         data = self.parse(RefreshTokenInput, request.data)
         container.logout_user().execute(data)
@@ -94,6 +95,7 @@ class LogoutView(BaseAPIView):
 class RequestPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=RequestPasswordResetInput)
     def post(self, request: Request):
         data = self.parse(RequestPasswordResetInput, request.data)
         result = container.request_password_reset().execute(data)
@@ -103,6 +105,7 @@ class RequestPasswordResetView(BaseAPIView):
 class ConfirmPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=ConfirmPasswordResetInput)
     def post(self, request: Request):
         data = self.parse(ConfirmPasswordResetInput, request.data)
         container.confirm_password_reset().execute(data)
@@ -112,8 +115,12 @@ class ConfirmPasswordResetView(BaseAPIView):
 class SocialLoginView(BaseAPIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(request=SocialLoginInput)
     def post(self, request: Request, provider: str):
-        data = self.parse(SocialLoginInput, {"provider": provider, "credential": request.data.get("credential", "")})
+        data = self.parse(
+            SocialLoginInput,
+            {"provider": provider, "credential": request.data.get("credential", "")},
+        )
         return ok(_auth_view(container.social_login().execute(data)))
 
 
@@ -123,6 +130,7 @@ class ProfileView(BaseAPIView):
     def get(self, request: Request):
         return ok(_profile_view(container.get_profile().execute(request.user.id)))
 
+    @extend_schema(request=UpdateProfileInput)
     def patch(self, request: Request):
         data = self.parse(UpdateProfileInput, request.data)
         return ok(_profile_view(container.update_profile().execute(request.user.id, data)))
@@ -131,6 +139,7 @@ class ProfileView(BaseAPIView):
 class ChangePasswordView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=ChangePasswordInput)
     def patch(self, request: Request):
         data = self.parse(ChangePasswordInput, request.data)
         container.change_password().execute(request.user.id, data)

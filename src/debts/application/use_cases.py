@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 from debts.application.dto import (
@@ -13,7 +14,6 @@ from debts.application.dto import (
 )
 from debts.application.ports import DebtPaymentRepository, DebtRepository
 from debts.domain.entities import Debt, DebtPayment
-from debts.domain.enums import DebtDirection
 from debts.domain.exceptions import (
     DebtAlreadyClosedError,
     DebtNotFoundError,
@@ -21,6 +21,7 @@ from debts.domain.exceptions import (
 )
 from finances.application.ports import AccountRepository
 from finances.domain.exceptions import AccountNotFoundError
+from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.money import Money
 
@@ -62,16 +63,7 @@ class UpdateDebt:
             raise DebtNotFoundError(debt_id)
         if debt.is_closed:
             raise DebtAlreadyClosedError
-        updated = Debt(
-            id=debt.id,
-            user_id=user_id,
-            person_name=data.person_name if data.person_name is not None else debt.person_name,
-            direction=debt.direction,
-            amount=debt.amount,
-            remaining=debt.remaining,
-            due_date=debt.due_date if data.due_date is None else data.due_date,
-            is_closed=debt.is_closed,
-        )
+        updated = apply_patch(debt, data, nullable={"due_date"})
         return _dto(self._debts.update(updated))
 
 
@@ -109,33 +101,27 @@ class RepayDebt:
         self._uow = uow
 
     def execute(self, user_id: UUID, debt_id: UUID, data: RepayDebtInput) -> DebtPaymentDTO:
-        debt = self._debts.get_by_id(debt_id, user_id)
-        if debt is None:
-            raise DebtNotFoundError(debt_id)
-        if debt.is_closed:
-            raise DebtAlreadyClosedError
-        account = self._accounts.get_by_id(data.account_id, user_id)
-        if account is None:
+        if self._accounts.get_by_id(data.account_id, user_id) is None:
             raise AccountNotFoundError(data.account_id)
-        amount = Money.from_minor_units(data.amount_minor, debt.amount.currency)
-        if amount > debt.remaining:
-            raise ExcessiveRepaymentError
-        new_remaining = debt.remaining - amount
         with self._uow:
+            # Re-read under a row lock so concurrent repayments cannot both pass
+            # the remaining-balance check.
+            debt = self._debts.get_for_update(debt_id, user_id)
+            if debt is None:
+                raise DebtNotFoundError(debt_id)
+            if debt.is_closed:
+                raise DebtAlreadyClosedError
+            amount = Money.from_minor_units(data.amount_minor, debt.amount.currency)
+            if amount > debt.remaining:
+                raise ExcessiveRepaymentError
+            new_remaining = debt.remaining - amount
             payment = self._payments.add(
-                DebtPayment(debt_id=debt_id, account_id=data.account_id, amount=amount, date=data.date)
+                DebtPayment(
+                    debt_id=debt_id, account_id=data.account_id, amount=amount, date=data.date
+                )
             )
             self._debts.update(
-                Debt(
-                    id=debt.id,
-                    user_id=user_id,
-                    person_name=debt.person_name,
-                    direction=debt.direction,
-                    amount=debt.amount,
-                    remaining=new_remaining,
-                    due_date=debt.due_date,
-                    is_closed=new_remaining.is_zero(),
-                )
+                replace(debt, remaining=new_remaining, is_closed=new_remaining.is_zero())
             )
         return DebtPaymentDTO(
             id=payment.id,
@@ -144,3 +130,12 @@ class RepayDebt:
             amount=payment.amount,
             date=payment.date,
         )
+
+
+class DeleteDebt:
+    def __init__(self, debts: DebtRepository) -> None:
+        self._debts = debts
+
+    def execute(self, user_id: UUID, debt_id: UUID) -> None:
+        if not self._debts.delete(debt_id, user_id):
+            raise DebtNotFoundError(debt_id)

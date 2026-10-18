@@ -43,14 +43,19 @@ class TestAccount:
     def test_rejects_bad_last4(self):
         with pytest.raises(ValidationError):
             Account(
-                user_id=USER, name="X", type=AccountType.DEBIT,
-                currency=CurrencyCode("RUB"), last4="12a4",
+                user_id=USER,
+                name="X",
+                type=AccountType.DEBIT,
+                currency=CurrencyCode("RUB"),
+                last4="12a4",
             )
 
     def test_rejects_negative_credit_limit(self):
         with pytest.raises(ValidationError):
             Account(
-                user_id=USER, name="X", type=AccountType.CREDIT,
+                user_id=USER,
+                name="X",
+                type=AccountType.CREDIT,
                 currency=CurrencyCode("RUB"),
                 credit_limit=Money.from_minor_units(-1, "RUB"),
             )
@@ -65,45 +70,61 @@ class TestCategory:
     def test_rejects_self_parent(self):
         cat_id = uuid4()
         with pytest.raises(ValidationError):
-            Category(user_id=USER, name="X", type=TransactionType.EXPENSE, parent_id=cat_id, id=cat_id)
+            Category(
+                user_id=USER, name="X", type=TransactionType.EXPENSE, parent_id=cat_id, id=cat_id
+            )
 
 
 class TestTransaction:
     def test_transfer_requires_destination(self):
         with pytest.raises(ValidationError):
             Transaction(
-                user_id=USER, account_id=uuid4(), type=TransactionType.TRANSFER,
-                amount=Money.from_minor_units(100, "RUB"), date=date(2026, 3, 15),
+                user_id=USER,
+                account_id=uuid4(),
+                type=TransactionType.TRANSFER,
+                amount=Money.from_minor_units(100, "RUB"),
+                date=date(2026, 3, 15),
             )
 
     def test_transfer_to_same_account_rejected(self):
         acct = uuid4()
         with pytest.raises(ValidationError):
             Transaction(
-                user_id=USER, account_id=acct, type=TransactionType.TRANSFER,
-                amount=Money.from_minor_units(100, "RUB"), date=date(2026, 3, 15),
+                user_id=USER,
+                account_id=acct,
+                type=TransactionType.TRANSFER,
+                amount=Money.from_minor_units(100, "RUB"),
+                date=date(2026, 3, 15),
                 transfer_to_account_id=acct,
             )
 
     def test_non_transfer_rejects_destination(self):
         with pytest.raises(ValidationError):
             Transaction(
-                user_id=USER, account_id=uuid4(), type=TransactionType.EXPENSE,
-                amount=Money.from_minor_units(100, "RUB"), date=date(2026, 3, 15),
+                user_id=USER,
+                account_id=uuid4(),
+                type=TransactionType.EXPENSE,
+                amount=Money.from_minor_units(100, "RUB"),
+                date=date(2026, 3, 15),
                 transfer_to_account_id=uuid4(),
             )
 
     def test_valid_expense(self):
         tx = Transaction(
-            user_id=USER, account_id=uuid4(), type=TransactionType.EXPENSE,
-            amount=Money.from_minor_units(1240_00, "RUB"), date=date(2026, 3, 15),
+            user_id=USER,
+            account_id=uuid4(),
+            type=TransactionType.EXPENSE,
+            amount=Money.from_minor_units(1240_00, "RUB"),
+            date=date(2026, 3, 15),
         )
         assert tx.amount.to_minor_units() == 1240_00
 
 
 class TestBudget:
     def test_creates_budget(self):
-        b = Budget(user_id=USER, category_id=uuid4(), amount=Money.from_minor_units(30000_00, "RUB"))
+        b = Budget(
+            user_id=USER, category_id=uuid4(), amount=Money.from_minor_units(30000_00, "RUB")
+        )
         assert b.period is BudgetPeriod.MONTHLY
 
     def test_rejects_non_positive_amount(self):
@@ -113,19 +134,31 @@ class TestBudget:
 
 class TestExchangeRate:
     def test_creates_rate(self):
-        r = ExchangeRate(base=CurrencyCode("USD"), target=CurrencyCode("RUB"),
-                         rate=Decimal("90.5"), date=date(2026, 3, 15))
+        r = ExchangeRate(
+            base=CurrencyCode("USD"),
+            target=CurrencyCode("RUB"),
+            rate=Decimal("90.5"),
+            date=date(2026, 3, 15),
+        )
         assert r.rate == Decimal("90.5")
 
     def test_rejects_same_currency(self):
         with pytest.raises(ValidationError):
-            ExchangeRate(base=CurrencyCode("USD"), target=CurrencyCode("USD"),
-                         rate=Decimal("1"), date=date(2026, 3, 15))
+            ExchangeRate(
+                base=CurrencyCode("USD"),
+                target=CurrencyCode("USD"),
+                rate=Decimal("1"),
+                date=date(2026, 3, 15),
+            )
 
     def test_rejects_non_positive_rate(self):
         with pytest.raises(ValidationError):
-            ExchangeRate(base=CurrencyCode("USD"), target=CurrencyCode("RUB"),
-                         rate=Decimal("0"), date=date(2026, 3, 15))
+            ExchangeRate(
+                base=CurrencyCode("USD"),
+                target=CurrencyCode("RUB"),
+                rate=Decimal("0"),
+                date=date(2026, 3, 15),
+            )
 
 
 class TestCategoryColor:

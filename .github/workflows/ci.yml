@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: spendyholik
+          POSTGRES_PASSWORD: spendyholik
+          POSTGRES_DB: spendyholik
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U spendyholik"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://spendyholik:spendyholik@localhost:5432/spendyholik
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --all-groups
+      - run: uv run pytest --cov=src --cov-report=term-missing
+
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: >-
+          helm lint deploy/charts/spendyholik-backend -f deploy/charts/spendyholik-backend/values-prod.yaml
+          --set secrets.SECRET_KEY=ci --set secrets.POSTGRES_PASSWORD=ci --set secrets.REDIS_PASSWORD=ci
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false

@@ -19,7 +19,7 @@ class UnitOfWork(ABC):
     """Transactional boundary around one or more repository writes."""
 
     @abstractmethod
-    def __enter__(self) -> "UnitOfWork": ...
+    def __enter__(self) -> UnitOfWork: ...
 
     @abstractmethod
     def __exit__(
@@ -61,5 +61,7 @@ class ObjectStorage(ABC):
 
 class ExchangeRateProvider(ABC):
     @abstractmethod
-    def get_rate(self, base: CurrencyCode, target: CurrencyCode, on: date | None = None) -> Decimal | None:
+    def get_rate(
+        self, base: CurrencyCode, target: CurrencyCode, on: date | None = None
+    ) -> Decimal | None:
         """Return the exchange rate (target per unit of base), or ``None``."""

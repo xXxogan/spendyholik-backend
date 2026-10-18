@@ -49,6 +49,10 @@ def contribution_to_domain(orm: GoalContributionORM) -> GoalContribution:
 
 def contribution_to_orm(c: GoalContribution) -> GoalContributionORM:
     return GoalContributionORM(
-        id=c.id, goal_id=c.goal_id, account_id=c.account_id,
-        amount=c.amount.amount, currency=c.amount.currency, date=c.date,
+        id=c.id,
+        goal_id=c.goal_id,
+        account_id=c.account_id,
+        amount=c.amount.amount,
+        currency=c.amount.currency,
+        date=c.date,
     )

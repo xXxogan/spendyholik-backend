@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from uuid import UUID
 
@@ -26,6 +26,7 @@ class DashboardDTO:
     expense_this_month: Money
     net_this_month: Money
     budgets: list[BudgetStatusDTO]
+    excluded_currencies: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class SummaryDTO:
     income: Money
     expense: Money
     net: Money
+    excluded_currencies: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

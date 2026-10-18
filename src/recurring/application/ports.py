@@ -23,7 +23,9 @@ class RecurringTransactionRepository(ABC):
     def update(self, recurring: RecurringTransaction) -> RecurringTransaction: ...
 
     @abstractmethod
-    def delete(self, recurring_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, recurring_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
     @abstractmethod
-    def list_due(self, on: date) -> list[RecurringTransaction]: ...
+    def list_due(self, on: date) -> list[RecurringTransaction]:
+        """Active templates with ``next_run <= on`` whose account is not archived."""

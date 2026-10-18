@@ -1,0 +1,80 @@
+# Default values for spendyholik-backend.
+# Secrets are NOT set here: pass them from a separate, uncommitted file
+# (`-f secrets.yaml`), see DEPLOY.md.
+
+image:
+  repository: spendyholik-backend   # e.g. ghcr.io/<org>/spendyholik-backend when using a registry
+  tag: ""                       # defaults to Chart.appVersion; CI sets the git SHA
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+resources:
+  api:    { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  worker: { requests: { cpu: 100m, memory: 192Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  beat:   { requests: { cpu: 20m,  memory: 128Mi }, limits: { cpu: 100m, memory: 192Mi } }
+
+# --- Bundled PostgreSQL (official image). Set enabled=false and provide
+# secrets.DATABASE_URL to use an external database.
+postgresql:
+  enabled: true
+  image: postgres:18
+  database: spendyholik
+  username: spendyholik
+  persistence: { size: 10Gi, storageClass: local-path }
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+
+# --- Bundled Redis (broker + cache). Set enabled=false and provide
+# secrets.REDIS_URL to use an external Redis.
+redis:
+  enabled: true
+  image: redis:8
+  resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+
+ingress:
+  enabled: true
+  className: traefik           # bundled with k3s
+  host: ""                     # empty = answer on any host/IP (before a domain exists)
+  tls:
+    enabled: false
+    secretName: spendyholik-api-tls
+    clusterIssuer: ""          # e.g. letsencrypt-prod (cert-manager)
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+persistence:
+  media:
+    enabled: true
+    size: 5Gi
+    storageClass: local-path
+
+# Non-secret environment, injected via the ConfigMap.
+env:
+  DJANGO_SETTINGS_MODULE: config.settings.production
+  ALLOWED_HOSTS: localhost
+  CORS_ALLOWED_ORIGINS: ""
+  CSRF_TRUSTED_ORIGINS: ""
+  # Keep "true" once HTTPS works; "false" only while serving plain HTTP.
+  SECURE_SSL_REDIRECT: "true"
+  SECURE_COOKIES: "true"
+  SECURE_HSTS_SECONDS: "31536000"
+  LOG_LEVEL: INFO
+  EMAIL_BACKEND: django.core.mail.backends.console.EmailBackend
+  EMAIL_HOST: ""
+  EMAIL_PORT: "587"
+  EMAIL_USE_TLS: "true"
+  EMAIL_HOST_USER: ""
+  DEFAULT_FROM_EMAIL: noreply@spendyholik.local
+
+# Secret values — override in an uncommitted secrets file.
+secrets:
+  SECRET_KEY: ""               # required
+  POSTGRES_PASSWORD: ""        # required when postgresql.enabled (use [A-Za-z0-9] only)
+  REDIS_PASSWORD: ""           # required when redis.enabled (use [A-Za-z0-9] only)
+  DATABASE_URL: ""             # only when postgresql.enabled=false
+  REDIS_URL: ""                # only when redis.enabled=false
+  EMAIL_HOST_PASSWORD: ""

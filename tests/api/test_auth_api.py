@@ -63,7 +63,9 @@ class TestProfile:
         assert resp.status_code == 200
         assert resp.json()["base_currency"] == "RUB"
 
-        resp = auth_client.patch("/api/v1/profile/", {"onboarded": True, "theme": "dark"}, format="json")
+        resp = auth_client.patch(
+            "/api/v1/profile/", {"onboarded": True, "theme": "dark"}, format="json"
+        )
         assert resp.status_code == 200
         assert resp.json()["onboarded"] is True
         assert resp.json()["theme"] == "dark"

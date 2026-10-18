@@ -1,0 +1,36 @@
+{{- $fullname := include "spendyholik-backend.fullname" . -}}
+# Runs after install (so the Secret, ConfigMap and database exist) and before
+# every upgrade: applies migrations and (re)seeds the celery-beat schedules.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-migrate
+  labels:
+    {{- include "spendyholik-backend.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: Never
+      {{- if .Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgresql.image }}
+          command:
+            - sh
+            - -c
+            - until pg_isready -h {{ $fullname }}-postgres -U {{ .Values.postgresql.username }}; do sleep 2; done
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "spendyholik-backend.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - python manage.py migrate --noinput && python manage.py setup_periodic_tasks
+          envFrom:
+            {{- include "spendyholik-backend.envFrom" . | nindent 12 }}

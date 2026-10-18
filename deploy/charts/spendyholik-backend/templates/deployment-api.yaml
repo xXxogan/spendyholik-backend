@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spendyholik-backend.fullname" . }}-api
+  labels:
+    {{- include "spendyholik-backend.labels" . | nindent 4 }}
+    component: api
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "spendyholik-backend.selectorLabels" . | nindent 6 }}
+      component: api
+  template:
+    metadata:
+      labels:
+        {{- include "spendyholik-backend.selectorLabels" . | nindent 8 }}
+        component: api
+      annotations:
+        # Roll pods when configuration changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: api
+          image: {{ include "spendyholik-backend.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            {{- include "spendyholik-backend.envFrom" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ include "spendyholik-backend.probeHost" . | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ include "spendyholik-backend.probeHost" . | quote }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+          {{- if .Values.persistence.media.enabled }}
+          volumeMounts:
+            - name: media
+              mountPath: /app/media
+          {{- end }}
+      {{- if .Values.persistence.media.enabled }}
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: {{ include "spendyholik-backend.fullname" . }}-media
+      {{- end }}

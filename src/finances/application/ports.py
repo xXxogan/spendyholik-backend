@@ -6,10 +6,14 @@ from abc import ABC, abstractmethod
 from datetime import date
 from uuid import UUID
 
+from finances.application.dto import TransactionLabels
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
 from finances.domain.enums import TransactionType
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import Money
+
+#: Amounts keyed by ISO 4217 currency code.
+type CurrencyTotals = dict[str, Money]
 
 
 class AccountRepository(ABC):
@@ -26,7 +30,8 @@ class AccountRepository(ABC):
     def update(self, account: Account) -> Account: ...
 
     @abstractmethod
-    def delete(self, account_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, account_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
 
 class CategoryRepository(ABC):
@@ -43,7 +48,8 @@ class CategoryRepository(ABC):
     def update(self, category: Category) -> Category: ...
 
     @abstractmethod
-    def delete(self, category_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, category_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
     @abstractmethod
     def is_ancestor(self, user_id: UUID, ancestor_id: UUID, descendant_id: UUID) -> bool: ...
@@ -60,10 +66,16 @@ class TransactionRepository(ABC):
     def get_by_id(self, transaction_id: UUID, user_id: UUID) -> Transaction | None: ...
 
     @abstractmethod
+    def get_labeled(
+        self, transaction_id: UUID, user_id: UUID
+    ) -> tuple[Transaction, TransactionLabels] | None: ...
+
+    @abstractmethod
     def update(self, transaction: Transaction) -> Transaction: ...
 
     @abstractmethod
-    def delete(self, transaction_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, transaction_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
     @abstractmethod
     def list_for_user(
@@ -78,22 +90,22 @@ class TransactionRepository(ABC):
         search: str | None = None,
         cursor: str | None = None,
         limit: int = 20,
-    ) -> tuple[list[Transaction], str | None]: ...
+    ) -> tuple[list[tuple[Transaction, TransactionLabels]], str | None]:
+        """A page ordered newest first (date, then creation) and the next cursor."""
 
     @abstractmethod
     def exists_for_source(self, user_id: UUID, recurring_id: UUID, date: date) -> bool: ...
 
+    # Aggregates skip archived accounts and are grouped by currency, because a
+    # user's accounts may be denominated in different currencies.
     @abstractmethod
-    def total_amount(
+    def totals_by_type(
         self,
         user_id: UUID,
         *,
-        type: TransactionType | None = None,
-        account_id: UUID | None = None,
-        category_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> Money | None: ...
+    ) -> dict[TransactionType, CurrencyTotals]: ...
 
     @abstractmethod
     def sum_by_category(
@@ -103,17 +115,17 @@ class TransactionRepository(ABC):
         type: TransactionType,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> dict[UUID, Money]: ...
+    ) -> dict[UUID, CurrencyTotals]: ...
 
     @abstractmethod
     def monthly_totals(
         self,
         user_id: UUID,
         *,
-        type: TransactionType,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> list[tuple[date, Money]]: ...
+    ) -> dict[tuple[date, TransactionType], CurrencyTotals]:
+        """Totals keyed by (first day of month, transaction type)."""
 
 
 class BudgetRepository(ABC):
@@ -130,7 +142,8 @@ class BudgetRepository(ABC):
     def update(self, budget: Budget) -> Budget: ...
 
     @abstractmethod
-    def delete(self, budget_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, budget_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
 
 class ExchangeRateRepository(ABC):

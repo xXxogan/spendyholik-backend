@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spendyholik-backend.fullname" . }}-worker
+  labels:
+    {{- include "spendyholik-backend.labels" . | nindent 4 }}
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "spendyholik-backend.selectorLabels" . | nindent 6 }}
+      component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "spendyholik-backend.selectorLabels" . | nindent 8 }}
+        component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: worker
+          image: {{ include "spendyholik-backend.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "config.celery:app", "worker", "--loglevel=info", "--concurrency=2"]
+          envFrom:
+            {{- include "spendyholik-backend.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}

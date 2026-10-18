@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from shared.domain.clock import Clock, SystemClock
 
@@ -9,4 +9,4 @@ class TestClock:
         now = clock.now()
         assert isinstance(now, datetime)
         assert now.tzinfo is not None
-        assert now.utcoffset() == timezone.utc.utcoffset(now)
+        assert now.utcoffset() == UTC.utcoffset(now)

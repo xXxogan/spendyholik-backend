@@ -22,22 +22,26 @@ class DjangoRecurringTransactionRepository(RecurringTransactionRepository):
         return [recurring_to_domain(r) for r in RecurringORM.objects.filter(user_id=user_id)]
 
     def update(self, recurring: RecurringTransaction) -> RecurringTransaction:
-        orm = RecurringORM.objects.get(pk=recurring.id, user_id=recurring.user_id)
-        orm.name = recurring.name
-        orm.amount = recurring.amount.amount
-        orm.account_id = recurring.account_id
-        orm.category_id = recurring.category_id
-        orm.frequency = recurring.frequency.value
-        orm.next_run = recurring.next_run
-        orm.is_active = recurring.is_active
-        orm.save()
+        RecurringORM.objects.filter(pk=recurring.id, user_id=recurring.user_id).update(
+            name=recurring.name,
+            amount=recurring.amount.amount,
+            currency=recurring.amount.currency,
+            account_id=recurring.account_id,
+            category_id=recurring.category_id,
+            frequency=recurring.frequency.value,
+            next_run=recurring.next_run,
+            is_active=recurring.is_active,
+        )
         return recurring
 
-    def delete(self, recurring_id: UUID, user_id: UUID) -> None:
-        RecurringORM.objects.filter(pk=recurring_id, user_id=user_id).delete()
+    def delete(self, recurring_id: UUID, user_id: UUID) -> bool:
+        deleted, _ = RecurringORM.objects.filter(pk=recurring_id, user_id=user_id).delete()
+        return deleted > 0
 
     def list_due(self, on: date) -> list[RecurringTransaction]:
         return [
             recurring_to_domain(r)
-            for r in RecurringORM.objects.filter(next_run__lte=on, is_active=True)
+            for r in RecurringORM.objects.filter(
+                next_run__lte=on, is_active=True, account__is_archived=False
+            )
         ]

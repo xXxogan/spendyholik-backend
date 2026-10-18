@@ -12,7 +12,12 @@ class NotificationListView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request):
-        return ok([notification_to_view(n) for n in container.list_notifications().execute(request.user.id)])
+        return ok(
+            [
+                notification_to_view(n)
+                for n in container.list_notifications().execute(request.user.id)
+            ]
+        )
 
 
 class NotificationReadAllView(BaseAPIView):

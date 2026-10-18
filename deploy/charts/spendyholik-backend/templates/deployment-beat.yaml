@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spendyholik-backend.fullname" . }}-beat
+  labels:
+    {{- include "spendyholik-backend.labels" . | nindent 4 }}
+    component: beat
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # never run two schedulers at once
+  selector:
+    matchLabels:
+      {{- include "spendyholik-backend.selectorLabels" . | nindent 6 }}
+      component: beat
+  template:
+    metadata:
+      labels:
+        {{- include "spendyholik-backend.selectorLabels" . | nindent 8 }}
+        component: beat
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: beat
+          image: {{ include "spendyholik-backend.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "config.celery:app", "beat", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler", "--loglevel=info"]
+          envFrom:
+            {{- include "spendyholik-backend.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.beat | nindent 12 }}

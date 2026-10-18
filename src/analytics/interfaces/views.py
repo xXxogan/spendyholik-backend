@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
@@ -10,12 +11,18 @@ from core.interfaces.deps import container
 from core.interfaces.renderers import dashboard_to_view, money_to_view
 
 
-def _parse_date(value: str | None) -> date | None:
-    return date.fromisoformat(value) if value else None
+def _parse_date(name: str, value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValidationError({name: "Expected an ISO date (YYYY-MM-DD)."}) from exc
 
 
 def _dates(request: Request):
-    return _parse_date(request.query_params.get("date_from")), _parse_date(request.query_params.get("date_to"))
+    qp = request.query_params
+    return _parse_date("date_from", qp.get("date_from")), _parse_date("date_to", qp.get("date_to"))
 
 
 class DashboardView(BaseAPIView):
@@ -36,6 +43,7 @@ class SummaryView(BaseAPIView):
                 "income": money_to_view(summary.income),
                 "expense": money_to_view(summary.expense),
                 "net": money_to_view(summary.net),
+                "excluded_currencies": summary.excluded_currencies,
             }
         )
 
@@ -63,7 +71,10 @@ class MonthlyTrendView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request):
-        months = int(request.query_params.get("months", 6))
+        try:
+            months = int(request.query_params.get("months", 6))
+        except ValueError as exc:
+            raise ValidationError({"months": "Expected an integer."}) from exc
         rows = container.get_monthly_trend().execute(request.user.id, months)
         return ok(
             [

@@ -27,7 +27,14 @@ from analytics.application.use_cases import (
     GetSpendingByCategory,
     GetSummary,
 )
-from debts.application.use_cases import CreateDebt, GetDebtDetail, ListDebts, RepayDebt, UpdateDebt
+from debts.application.use_cases import (
+    CreateDebt,
+    DeleteDebt,
+    GetDebtDetail,
+    ListDebts,
+    RepayDebt,
+    UpdateDebt,
+)
 from debts.infrastructure.repositories import DjangoDebtPaymentRepository, DjangoDebtRepository
 from finances.application.use_cases import (
     ArchiveAccount,
@@ -60,6 +67,7 @@ from finances.infrastructure.repositories import (
 from goals.application.use_cases import (
     ContributeToGoal,
     CreateGoal,
+    DeleteGoal,
     ForecastGoal,
     GetGoalDetail,
     ListGoals,
@@ -70,6 +78,7 @@ from notifications.application.use_cases import ListNotifications, MarkNotificat
 from notifications.infrastructure.repositories import DjangoNotificationRepository
 from recurring.application.use_cases import (
     CreateRecurring,
+    DeleteRecurring,
     ListRecurring,
     RunDueRecurring,
     ToggleRecurring,
@@ -86,8 +95,11 @@ class Container:
     # --- accounts ---
     def register_user(self) -> RegisterUser:
         return RegisterUser(
-            DjangoUserRepository(), DjangoProfileRepository(),
-            DjangoPasswordHasher(), SimpleJWTTokenService(),
+            DjangoUserRepository(),
+            DjangoProfileRepository(),
+            DjangoPasswordHasher(),
+            SimpleJWTTokenService(),
+            DjangoUnitOfWork(),
         )
 
     def login_user(self) -> LoginUser:
@@ -101,8 +113,12 @@ class Container:
 
     def social_login(self) -> SocialLogin:
         return SocialLogin(
-            SocialAuthIdentityProvider(), DjangoUserRepository(),
-            DjangoProfileRepository(), DjangoPasswordHasher(), SimpleJWTTokenService(),
+            SocialAuthIdentityProvider(),
+            DjangoUserRepository(),
+            DjangoProfileRepository(),
+            DjangoPasswordHasher(),
+            SimpleJWTTokenService(),
+            DjangoUnitOfWork(),
         )
 
     def request_password_reset(self) -> RequestPasswordReset:
@@ -170,7 +186,9 @@ class Container:
         return ListTransactions(DjangoTransactionRepository())
 
     def create_budget(self) -> CreateBudget:
-        return CreateBudget(DjangoBudgetRepository(), DjangoCategoryRepository())
+        return CreateBudget(
+            DjangoBudgetRepository(), DjangoCategoryRepository(), DjangoProfileRepository()
+        )
 
     def update_budget(self) -> UpdateBudget:
         return UpdateBudget(DjangoBudgetRepository(), DjangoCategoryRepository())
@@ -199,12 +217,19 @@ class Container:
 
     def contribute_to_goal(self) -> ContributeToGoal:
         return ContributeToGoal(
-            DjangoGoalRepository(), DjangoGoalContributionRepository(),
-            DjangoAccountRepository(), DjangoUnitOfWork(),
+            DjangoGoalRepository(),
+            DjangoGoalContributionRepository(),
+            DjangoAccountRepository(),
+            DjangoUnitOfWork(),
         )
 
+    def delete_goal(self) -> DeleteGoal:
+        return DeleteGoal(DjangoGoalRepository())
+
     def forecast_goal(self) -> ForecastGoal:
-        return ForecastGoal(DjangoGoalRepository(), DjangoGoalContributionRepository(), SystemClock())
+        return ForecastGoal(
+            DjangoGoalRepository(), DjangoGoalContributionRepository(), SystemClock()
+        )
 
     # --- recurring ---
     def create_recurring(self) -> CreateRecurring:
@@ -216,13 +241,18 @@ class Container:
     def toggle_recurring(self) -> ToggleRecurring:
         return ToggleRecurring(DjangoRecurringTransactionRepository())
 
+    def delete_recurring(self) -> DeleteRecurring:
+        return DeleteRecurring(DjangoRecurringTransactionRepository())
+
     def list_recurring(self) -> ListRecurring:
         return ListRecurring(DjangoRecurringTransactionRepository())
 
     def run_due_recurring(self) -> RunDueRecurring:
         return RunDueRecurring(
-            DjangoRecurringTransactionRepository(), DjangoTransactionRepository(),
-            DjangoAccountRepository(), DjangoUnitOfWork(), SystemClock(),
+            DjangoRecurringTransactionRepository(),
+            DjangoTransactionRepository(),
+            DjangoUnitOfWork(),
+            SystemClock(),
         )
 
     # --- debts ---
@@ -235,30 +265,51 @@ class Container:
     def list_debts(self) -> ListDebts:
         return ListDebts(DjangoDebtRepository())
 
+    def delete_debt(self) -> DeleteDebt:
+        return DeleteDebt(DjangoDebtRepository())
+
     def get_debt_detail(self) -> GetDebtDetail:
         return GetDebtDetail(DjangoDebtRepository(), DjangoDebtPaymentRepository())
 
     def repay_debt(self) -> RepayDebt:
         return RepayDebt(
-            DjangoDebtRepository(), DjangoDebtPaymentRepository(),
-            DjangoAccountRepository(), DjangoUnitOfWork(),
+            DjangoDebtRepository(),
+            DjangoDebtPaymentRepository(),
+            DjangoAccountRepository(),
+            DjangoUnitOfWork(),
         )
 
     # --- analytics ---
     def get_dashboard(self) -> GetDashboard:
         return GetDashboard(
-            DjangoAccountRepository(), DjangoTransactionRepository(),
-            DjangoBudgetRepository(), SystemClock(),
+            DjangoAccountRepository(),
+            DjangoTransactionRepository(),
+            DjangoBudgetRepository(),
+            DjangoProfileRepository(),
+            DjangoExchangeRateRepository(),
+            SystemClock(),
         )
 
     def get_summary(self) -> GetSummary:
-        return GetSummary(DjangoTransactionRepository())
+        return GetSummary(
+            DjangoTransactionRepository(), DjangoProfileRepository(), DjangoExchangeRateRepository()
+        )
 
     def get_spending_by_category(self) -> GetSpendingByCategory:
-        return GetSpendingByCategory(DjangoTransactionRepository(), DjangoCategoryRepository())
+        return GetSpendingByCategory(
+            DjangoTransactionRepository(),
+            DjangoCategoryRepository(),
+            DjangoProfileRepository(),
+            DjangoExchangeRateRepository(),
+        )
 
     def get_monthly_trend(self) -> GetMonthlyTrend:
-        return GetMonthlyTrend(DjangoTransactionRepository(), SystemClock())
+        return GetMonthlyTrend(
+            DjangoTransactionRepository(),
+            DjangoProfileRepository(),
+            DjangoExchangeRateRepository(),
+            SystemClock(),
+        )
 
     # --- notifications ---
     def list_notifications(self) -> ListNotifications:

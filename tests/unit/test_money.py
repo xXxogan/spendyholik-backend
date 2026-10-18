@@ -70,7 +70,7 @@ class TestMoneyComparison:
 
     def test_lt_different_currency_raises(self):
         with pytest.raises(CurrencyMismatchError):
-            Money(Decimal("1.00"), "RUB") < Money(Decimal("2.00"), "USD")
+            _ = Money(Decimal("1.00"), "RUB") < Money(Decimal("2.00"), "USD")
 
     def test_le_gt_ge(self):
         a = Money(Decimal("1.00"), "RUB")

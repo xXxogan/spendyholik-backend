@@ -1,0 +1,15 @@
+{{- if .Values.persistence.media.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "spendyholik-backend.fullname" . }}-media
+  labels:
+    {{- include "spendyholik-backend.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.persistence.media.size }}
+  storageClassName: {{ .Values.persistence.media.storageClass }}
+{{- end }}

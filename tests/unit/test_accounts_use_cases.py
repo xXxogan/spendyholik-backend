@@ -13,7 +13,6 @@ from accounts.application.dto import (
     UpdateProfileInput,
 )
 from accounts.application.ports import SocialIdentity
-from accounts.domain.value_objects import Email
 from accounts.application.use_cases import (
     ChangePassword,
     ConfirmPasswordReset,
@@ -30,12 +29,14 @@ from accounts.domain.exceptions import (
     PasswordResetTokenInvalidError,
     ProfileNotFoundError,
 )
+from accounts.domain.value_objects import Email
 from shared.exceptions import ValidationError as DomainValidationError
 from tests.fakes import (
     FakeAuthTokenService,
     FakePasswordHasher,
     FakePasswordResetGateway,
     FakeSocialIdentityProvider,
+    FakeUnitOfWork,
     InMemoryProfileRepository,
     InMemoryUserRepository,
 )
@@ -50,7 +51,7 @@ def _registrar():
 
 
 def _register(users, profiles, hasher, tokens, email="a@b.co", password="password123"):
-    return RegisterUser(users, profiles, hasher, tokens).execute(
+    return RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
         RegisterUserInput(email=email, password=password, first_name="Ann")
     )
 
@@ -72,7 +73,7 @@ class TestRegisterUser:
     def test_invalid_email_raises(self):
         users, profiles, hasher, tokens = _registrar()
         with pytest.raises(DomainValidationError):
-            RegisterUser(users, profiles, hasher, tokens).execute(
+            RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
                 RegisterUserInput(email="nope", password="password123")
             )
 
@@ -132,7 +133,8 @@ class TestChangePassword:
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
         ChangePassword(users, hasher).execute(
-            result.user.id, ChangePasswordInput(old_password="password123", new_password="newpass456")
+            result.user.id,
+            ChangePasswordInput(old_password="password123", new_password="newpass456"),
         )
         # Login with the new password succeeds.
         LoginUser(users, hasher, tokens).execute(
@@ -151,7 +153,7 @@ class TestChangePassword:
 class TestPasswordReset:
     def test_request_and_confirm(self):
         users, profiles, hasher, tokens = _registrar()
-        result = _register(users, profiles, hasher, tokens)
+        _register(users, profiles, hasher, tokens)
         gateway = FakePasswordResetGateway()
         requested = RequestPasswordReset(users, gateway).execute(
             RequestPasswordResetInput(email="a@b.co")
@@ -184,7 +186,7 @@ class TestSocialLogin:
         provider = FakeSocialIdentityProvider(
             {"google:code123": SocialIdentity("google", Email("g@b.co"), "G")}
         )
-        result = SocialLogin(provider, users, profiles, hasher, tokens).execute(
+        result = SocialLogin(provider, users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
             SocialLoginInput(provider="google", credential="code123")
         )
         assert result.user.email == "g@b.co"
@@ -195,6 +197,11 @@ class TestSocialLogin:
         profiles = InMemoryProfileRepository()
         provider = FakeSocialIdentityProvider()
         with pytest.raises(InvalidCredentialsError):
-            SocialLogin(provider, users, profiles, FakePasswordHasher(), FakeAuthTokenService()).execute(
-                SocialLoginInput(provider="google", credential="bad")
-            )
+            SocialLogin(
+                provider,
+                users,
+                profiles,
+                FakePasswordHasher(),
+                FakeAuthTokenService(),
+                FakeUnitOfWork(),
+            ).execute(SocialLoginInput(provider="google", credential="bad"))

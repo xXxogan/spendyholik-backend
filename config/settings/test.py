@@ -21,6 +21,9 @@ DATABASES = {
     "default": env.db("TEST_DATABASE_URL", default=env("DATABASE_URL", default="sqlite://:memory:"))
 }
 
+# Tests must not require a running Redis.
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
 RATELIMIT_ENABLE = False
 
 # Disable the live external exchange-rate provider during tests.

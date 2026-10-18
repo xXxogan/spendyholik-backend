@@ -12,5 +12,9 @@ class TestNotification:
 
     def test_type_values(self):
         assert {t.value for t in NotificationType} == {
-            "system", "budget_threshold", "goal_progress", "upcoming_recurring", "weekly_report",
+            "system",
+            "budget_threshold",
+            "goal_progress",
+            "upcoming_recurring",
+            "weekly_report",
         }

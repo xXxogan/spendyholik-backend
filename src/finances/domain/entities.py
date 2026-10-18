@@ -27,7 +27,7 @@ class Account:
     name: str
     type: AccountType
     currency: CurrencyCode
-    initial_balance: Money = field(default_factory=lambda: Money.zero("RUB"))
+    initial_balance: Money | None = None  # defaults to zero in the account's currency
     color: CategoryColor = CategoryColor("default")
     last4: str | None = None
     credit_limit: Money | None = None
@@ -39,16 +39,17 @@ class Account:
         if not self.name.strip():
             msg = "Account name must not be empty."
             raise ValidationError(msg)
+        if self.initial_balance is None:
+            object.__setattr__(self, "initial_balance", Money.zero(self.currency.value))
         _require_money_currency(self.initial_balance, self.currency)
         if self.credit_limit is not None:
             _require_money_currency(self.credit_limit, self.currency)
             if self.credit_limit.is_negative():
                 msg = "Credit limit must be non-negative."
                 raise ValidationError(msg)
-        if self.last4 is not None:
-            if not (self.last4.isdigit() and len(self.last4) <= 4):
-                msg = "last4 must be a string of at most 4 digits."
-                raise ValidationError(msg)
+        if self.last4 is not None and not (self.last4.isdigit() and len(self.last4) <= 4):
+            msg = "last4 must be a string of at most 4 digits."
+            raise ValidationError(msg)
         if self.interest_rate < 0:
             msg = "Interest rate must be non-negative."
             raise ValidationError(msg)

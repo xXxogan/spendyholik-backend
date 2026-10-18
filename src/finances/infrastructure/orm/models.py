@@ -16,7 +16,9 @@ def _choices(enum_cls):
 
 class Account(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="accounts")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="accounts"
+    )
     name = models.CharField(max_length=120)
     type = models.CharField(max_length=20, choices=_choices(AccountType))
     currency = models.CharField(max_length=3)
@@ -40,7 +42,9 @@ class Account(models.Model):
 
 class Category(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="categories")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="categories"
+    )
     name = models.CharField(max_length=120)
     type = models.CharField(max_length=20, choices=_choices(TransactionType))
     icon = models.CharField(max_length=40, default="tag")
@@ -62,9 +66,13 @@ class Category(models.Model):
 
 class Transaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="transactions")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="transactions"
+    )
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="transactions")
-    category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL, related_name="transactions")
+    category = models.ForeignKey(
+        Category, null=True, blank=True, on_delete=models.SET_NULL, related_name="transactions"
+    )
     type = models.CharField(max_length=20, choices=_choices(TransactionType))
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     date = models.DateField(db_index=True)
@@ -80,9 +88,18 @@ class Transaction(models.Model):
     class Meta:
         ordering = ("-date", "-created_at")
         indexes = [
-            models.Index(fields=["user", "date"]),
+            # Serves the feed ordering/cursor and date-range aggregates.
+            models.Index(fields=["user", "-date", "-created_at", "-id"], name="tx_user_feed_idx"),
             models.Index(fields=["user", "category"]),
             models.Index(fields=["user", "recurring_source_id", "date"]),
+        ]
+        constraints = [
+            # Makes recurring generation idempotent even under concurrent runs.
+            models.UniqueConstraint(
+                fields=["recurring_source_id", "date"],
+                condition=models.Q(recurring_source_id__isnull=False),
+                name="uniq_tx_recurring_source_date",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -91,10 +108,14 @@ class Transaction(models.Model):
 
 class Budget(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="budgets")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="budgets"
+    )
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="budgets")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
-    period = models.CharField(max_length=20, choices=_choices(BudgetPeriod), default=BudgetPeriod.MONTHLY.value)
+    period = models.CharField(
+        max_length=20, choices=_choices(BudgetPeriod), default=BudgetPeriod.MONTHLY.value
+    )
     start_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
@@ -118,7 +139,9 @@ class ExchangeRate(models.Model):
     class Meta:
         ordering = ("-date",)
         constraints = [
-            models.UniqueConstraint(fields=["base", "target", "date"], name="uniq_rate_base_target_date"),
+            models.UniqueConstraint(
+                fields=["base", "target", "date"], name="uniq_rate_base_target_date"
+            ),
         ]
 
     def __str__(self) -> str:

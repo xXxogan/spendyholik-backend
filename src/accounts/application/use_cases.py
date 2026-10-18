@@ -12,8 +12,9 @@ from accounts.application.dto import (
     LoginUserInput,
     PasswordResetRequestedDTO,
     ProfileDTO,
-    RegisterUserInput,
     RefreshTokenInput,
+    RegisterUserInput,
+    RequestPasswordResetInput,
     SocialLoginInput,
     UpdateProfileInput,
     UserDTO,
@@ -36,6 +37,8 @@ from accounts.domain.exceptions import (
     UserNotFoundError,
 )
 from accounts.domain.value_objects import Email
+from shared.application.patch import apply_patch
+from shared.application.ports import UnitOfWork
 from shared.domain.currency_code import CurrencyCode
 
 
@@ -63,21 +66,24 @@ class RegisterUser:
         profile_repo: ProfileRepository,
         password_hasher: PasswordHasher,
         token_service: AuthTokenService,
+        uow: UnitOfWork,
     ) -> None:
         self._users = user_repo
         self._profiles = profile_repo
         self._hasher = password_hasher
         self._tokens = token_service
+        self._uow = uow
 
     def execute(self, data: RegisterUserInput) -> AuthResultDTO:
         email = Email(data.email)
         if self._users.email_exists(email):
             raise EmailAlreadyTakenError
-        user = self._users.add(
-            User(email=email, first_name=data.first_name),
-            self._hasher.hash(data.password),
-        )
-        self._profiles.add(Profile(user_id=user.id))
+        password_hash = self._hasher.hash(data.password)
+        with self._uow:
+            # UserRepository.add raises EmailAlreadyTakenError if a concurrent
+            # registration wins the race past the check above.
+            user = self._users.add(User(email=email, first_name=data.first_name), password_hash)
+            self._profiles.add(Profile(user_id=user.id))
         return AuthResultDTO(user=_user_dto(user), tokens=self._tokens.issue(user))
 
 
@@ -96,6 +102,8 @@ class LoginUser:
         email = Email(data.email)
         user = self._users.get_by_email(email)
         if user is None:
+            # Hash anyway so response time does not reveal whether the email exists.
+            self._hasher.hash(data.password)
             raise InvalidCredentialsError
         password_hash = self._users.get_password_hash(user.id)
         if not self._hasher.verify(data.password, password_hash or ""):
@@ -127,12 +135,14 @@ class SocialLogin:
         profile_repo: ProfileRepository,
         password_hasher: PasswordHasher,
         token_service: AuthTokenService,
+        uow: UnitOfWork,
     ) -> None:
         self._provider = provider
         self._users = user_repo
         self._profiles = profile_repo
         self._hasher = password_hasher
         self._tokens = token_service
+        self._uow = uow
 
     def execute(self, data: SocialLoginInput) -> AuthResultDTO:
         identity = self._provider.exchange(data.provider, data.credential)
@@ -141,11 +151,12 @@ class SocialLogin:
         user = self._users.get_by_email(identity.email)
         if user is None:
             # Social users have no password — store an unusable random hash.
-            user = self._users.add(
-                User(email=identity.email, first_name=identity.first_name),
-                self._hasher.hash(secrets.token_urlsafe(48)),
-            )
-            self._profiles.add(Profile(user_id=user.id))
+            password_hash = self._hasher.hash(secrets.token_urlsafe(48))
+            with self._uow:
+                user = self._users.add(
+                    User(email=identity.email, first_name=identity.first_name), password_hash
+                )
+                self._profiles.add(Profile(user_id=user.id))
         return AuthResultDTO(user=_user_dto(user), tokens=self._tokens.issue(user))
 
 
@@ -168,17 +179,8 @@ class UpdateProfile:
         profile = self._profiles.get_by_user(user_id)
         if profile is None:
             raise ProfileNotFoundError(user_id)
-        updated = Profile(
-            user_id=user_id,
-            base_currency=profile.base_currency if data.base_currency is None else CurrencyCode(data.base_currency),
-            theme=profile.theme if data.theme is None else data.theme,
-            onboarded=profile.onboarded if data.onboarded is None else data.onboarded,
-            notify_budget=profile.notify_budget if data.notify_budget is None else data.notify_budget,
-            notify_goal=profile.notify_goal if data.notify_goal is None else data.notify_goal,
-            notify_recurring=profile.notify_recurring if data.notify_recurring is None else data.notify_recurring,
-            notify_weekly_report=profile.notify_weekly_report
-            if data.notify_weekly_report is None
-            else data.notify_weekly_report,
+        updated = apply_patch(
+            profile, data, fields={"base_currency": ("base_currency", CurrencyCode)}
         )
         return _profile_dto(self._profiles.update(updated))
 

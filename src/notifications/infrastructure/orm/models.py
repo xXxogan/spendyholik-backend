@@ -14,7 +14,9 @@ def _choices(enum_cls):
 
 class Notification(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications"
+    )
     type = models.CharField(max_length=30, choices=_choices(NotificationType))
     title = models.CharField(max_length=200)
     body = models.TextField(blank=True, default="")

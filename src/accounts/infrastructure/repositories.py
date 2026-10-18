@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from django.db import IntegrityError
+
 from accounts.application.ports import ProfileRepository, UserRepository
 from accounts.domain.entities import Profile, User
+from accounts.domain.exceptions import EmailAlreadyTakenError
 from accounts.domain.value_objects import Email
 from accounts.infrastructure.mappers import (
     profile_to_domain,
@@ -19,8 +22,10 @@ from accounts.infrastructure.orm.models import User as UserORM
 
 class DjangoUserRepository(UserRepository):
     def add(self, user: User, password_hash: str) -> User:
-        orm = user_to_orm(user, password_hash)
-        orm.save(force_insert=True)
+        try:
+            user_to_orm(user, password_hash).save(force_insert=True)
+        except IntegrityError as exc:
+            raise EmailAlreadyTakenError from exc
         return user
 
     def get_by_id(self, user_id: UUID) -> User | None:
@@ -61,13 +66,13 @@ class DjangoProfileRepository(ProfileRepository):
         return profile_to_domain(orm) if orm else None
 
     def update(self, profile: Profile) -> Profile:
-        orm = ProfileORM.objects.get(pk=profile.user_id)
-        orm.base_currency = profile.base_currency.value
-        orm.theme = profile.theme.value
-        orm.onboarded = profile.onboarded
-        orm.notify_budget = profile.notify_budget
-        orm.notify_goal = profile.notify_goal
-        orm.notify_recurring = profile.notify_recurring
-        orm.notify_weekly_report = profile.notify_weekly_report
-        orm.save()
+        ProfileORM.objects.filter(pk=profile.user_id).update(
+            base_currency=profile.base_currency.value,
+            theme=profile.theme.value,
+            onboarded=profile.onboarded,
+            notify_budget=profile.notify_budget,
+            notify_goal=profile.notify_goal,
+            notify_recurring=profile.notify_recurring,
+            notify_weekly_report=profile.notify_weekly_report,
+        )
         return profile

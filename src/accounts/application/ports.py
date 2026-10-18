@@ -91,7 +91,7 @@ class SocialIdentityProvider(ABC):
     """Exchanges an external OAuth credential for a verified identity."""
 
     @abstractmethod
-    def exchange(self, provider: str, credential: str) -> "SocialIdentity | None": ...
+    def exchange(self, provider: str, credential: str) -> SocialIdentity | None: ...
 
 
 @dataclass(frozen=True, slots=True)

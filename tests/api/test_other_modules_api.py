@@ -13,7 +13,12 @@ class TestGoals:
         ).json()
         goal = auth_client.post(
             "/api/v1/goals/",
-            {"name": "Подушка", "target_amount_minor": 100000_00, "currency": "RUB", "account_id": acct["id"]},
+            {
+                "name": "Подушка",
+                "target_amount_minor": 100000_00,
+                "currency": "RUB",
+                "account_id": acct["id"],
+            },
             format="json",
         )
         assert goal.status_code == 201
@@ -37,7 +42,12 @@ class TestDebts:
         ).json()
         debt = auth_client.post(
             "/api/v1/debts/",
-            {"person_name": "Иван", "direction": "i_owe", "amount_minor": 1000_00, "currency": "RUB"},
+            {
+                "person_name": "Иван",
+                "direction": "i_owe",
+                "amount_minor": 1000_00,
+                "currency": "RUB",
+            },
             format="json",
         ).json()
         resp = auth_client.post(
@@ -59,11 +69,19 @@ class TestRecurring:
         ).json()
         r = auth_client.post(
             "/api/v1/recurring/",
-            {"name": "Аренда", "amount_minor": 40000_00, "type": "expense", "account_id": acct["id"],
-             "frequency": "monthly", "next_run": "2026-04-01"},
+            {
+                "name": "Аренда",
+                "amount_minor": 40000_00,
+                "type": "expense",
+                "account_id": acct["id"],
+                "frequency": "monthly",
+                "next_run": "2026-04-01",
+            },
             format="json",
         ).json()
-        resp = auth_client.post(f"/api/v1/recurring/{r['id']}/toggle/", {"is_active": False}, format="json")
+        resp = auth_client.post(
+            f"/api/v1/recurring/{r['id']}/toggle/", {"is_active": False}, format="json"
+        )
         assert resp.status_code == 200
         assert resp.json()["is_active"] is False
 
@@ -75,14 +93,28 @@ class TestAnalytics:
 
         today = date.today().isoformat()
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Счёт", "type": "debit", "currency": "RUB",
-                                  "initial_balance_minor": 100000_00}, format="json"
+            "/api/v1/accounts/",
+            {
+                "name": "Счёт",
+                "type": "debit",
+                "currency": "RUB",
+                "initial_balance_minor": 100000_00,
+            },
+            format="json",
         ).json()
-        cat = auth_client.post("/api/v1/categories/", {"name": "Еда", "type": "expense"}, format="json").json()
+        cat = auth_client.post(
+            "/api/v1/categories/", {"name": "Еда", "type": "expense"}, format="json"
+        ).json()
         auth_client.post(
             "/api/v1/transactions/",
-            {"account_id": acct["id"], "category_id": cat["id"], "type": "expense",
-             "amount_minor": 20000_00, "date": today}, format="json",
+            {
+                "account_id": acct["id"],
+                "category_id": cat["id"],
+                "type": "expense",
+                "amount_minor": 20000_00,
+                "date": today,
+            },
+            format="json",
         )
         dash = auth_client.get("/api/v1/dashboard/")
         assert dash.status_code == 200

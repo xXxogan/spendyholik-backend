@@ -1,0 +1,13 @@
+SpendyHolik backend deployed as {{ include "spendyholik-backend.fullname" . }}.
+
+Check the pods (namespace {{ .Release.Namespace }}):
+
+  kubectl -n {{ .Release.Namespace }} get pods
+
+Readiness:
+
+  curl -H "Host: {{ include "spendyholik-backend.probeHost" . }}" http://{{ .Values.ingress.host | default "<server-ip>" }}/ready/
+
+Create an admin user:
+
+  kubectl -n {{ .Release.Namespace }} exec -it deploy/{{ include "spendyholik-backend.fullname" . }}-api -- python manage.py createsuperuser

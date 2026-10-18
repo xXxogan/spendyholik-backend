@@ -14,10 +14,7 @@ class DjangoNotificationRepository(NotificationRepository):
         return notification
 
     def list_for_user(self, user_id: UUID) -> list[Notification]:
-        return [
-            notification_to_domain(n)
-            for n in NotificationORM.objects.filter(user_id=user_id)
-        ]
+        return [notification_to_domain(n) for n in NotificationORM.objects.filter(user_id=user_id)]
 
     def unread_count(self, user_id: UUID) -> int:
         return NotificationORM.objects.filter(user_id=user_id, is_read=False).count()

@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from accounts.domain.entities import Profile
 from finances.application.dto import (
     CreateAccountInput,
     CreateBudgetInput,
@@ -29,11 +30,13 @@ from finances.domain.exceptions import (
     CategoryCycleError,
     CategoryInUseError,
 )
+from shared.domain.currency_code import CurrencyCode
 from shared.exceptions import ValidationError
 from tests.fakes import (
     InMemoryAccountRepository,
     InMemoryBudgetRepository,
     InMemoryCategoryRepository,
+    InMemoryProfileRepository,
     InMemoryTransactionRepository,
 )
 
@@ -73,8 +76,11 @@ class TestCreateTransaction:
         dto = CreateTransaction(accounts, categories, transactions).execute(
             USER,
             CreateTransactionInput(
-                account_id=acct.id, type=TransactionType.EXPENSE,
-                amount_minor=1240_00, date=date(2026, 3, 15), category_id=cat.id,
+                account_id=acct.id,
+                type=TransactionType.EXPENSE,
+                amount_minor=1240_00,
+                date=date(2026, 3, 15),
+                category_id=cat.id,
             ),
         )
         assert dto.amount.to_minor_units() == 1240_00
@@ -85,11 +91,15 @@ class TestCreateTransaction:
         acct = _account(accounts)
         ArchiveAccount(accounts).execute(USER, acct.id)
         with pytest.raises(AccountArchivedError):
-            CreateTransaction(accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()).execute(
+            CreateTransaction(
+                accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()
+            ).execute(
                 USER,
                 CreateTransactionInput(
-                    account_id=acct.id, type=TransactionType.EXPENSE,
-                    amount_minor=100, date=date(2026, 3, 15),
+                    account_id=acct.id,
+                    type=TransactionType.EXPENSE,
+                    amount_minor=100,
+                    date=date(2026, 3, 15),
                 ),
             )
 
@@ -97,11 +107,15 @@ class TestCreateTransaction:
         accounts = InMemoryAccountRepository()
         acct = _account(accounts)
         with pytest.raises(AccountNotFoundError):
-            CreateTransaction(accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()).execute(
+            CreateTransaction(
+                accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()
+            ).execute(
                 USER,
                 CreateTransactionInput(
-                    account_id=acct.id, type=TransactionType.TRANSFER,
-                    amount_minor=100, date=date(2026, 3, 15),
+                    account_id=acct.id,
+                    type=TransactionType.TRANSFER,
+                    amount_minor=100,
+                    date=date(2026, 3, 15),
                     transfer_to_account_id=uuid4(),
                 ),
             )
@@ -111,11 +125,16 @@ class TestCreateTransaction:
         src = _account(accounts, currency="RUB")
         dst = _account(accounts, name="USD", currency="USD")
         with pytest.raises(ValidationError):
-            CreateTransaction(accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()).execute(
+            CreateTransaction(
+                accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()
+            ).execute(
                 USER,
                 CreateTransactionInput(
-                    account_id=src.id, type=TransactionType.TRANSFER,
-                    amount_minor=100, date=date(2026, 3, 15), transfer_to_account_id=dst.id,
+                    account_id=src.id,
+                    type=TransactionType.TRANSFER,
+                    amount_minor=100,
+                    date=date(2026, 3, 15),
+                    transfer_to_account_id=dst.id,
                 ),
             )
 
@@ -130,8 +149,11 @@ class TestCreateTransaction:
             CreateTransaction(accounts, categories, InMemoryTransactionRepository()).execute(
                 USER,
                 CreateTransactionInput(
-                    account_id=acct.id, type=TransactionType.EXPENSE,
-                    amount_minor=100, date=date(2026, 3, 15), category_id=income_cat.id,
+                    account_id=acct.id,
+                    type=TransactionType.EXPENSE,
+                    amount_minor=100,
+                    date=date(2026, 3, 15),
+                    category_id=income_cat.id,
                 ),
             )
 
@@ -145,8 +167,10 @@ class TestListTransactions:
             CreateTransaction(accounts, InMemoryCategoryRepository(), transactions).execute(
                 USER,
                 CreateTransactionInput(
-                    account_id=acct.id, type=TransactionType.EXPENSE,
-                    amount_minor=100 + i, date=date(2026, 3, i + 1),
+                    account_id=acct.id,
+                    type=TransactionType.EXPENSE,
+                    amount_minor=100 + i,
+                    date=date(2026, 3, i + 1),
                 ),
             )
         first = ListTransactions(transactions).execute(USER, ListTransactionsInput(limit=2))
@@ -167,12 +191,11 @@ class TestCategories:
             USER, CreateCategoryInput(name="Родитель", type=TransactionType.EXPENSE)
         )
         child = CreateCategory(repo).execute(
-            USER, CreateCategoryInput(name="Ребёнок", type=TransactionType.EXPENSE, parent_id=parent.id)
+            USER,
+            CreateCategoryInput(name="Ребёнок", type=TransactionType.EXPENSE, parent_id=parent.id),
         )
         with pytest.raises(CategoryCycleError):
-            UpdateCategory(repo).execute(
-                USER, parent.id, UpdateCategoryInput(parent_id=child.id)
-            )
+            UpdateCategory(repo).execute(USER, parent.id, UpdateCategoryInput(parent_id=child.id))
 
     def test_delete_in_use_category_rejected(self):
         categories = InMemoryCategoryRepository()
@@ -185,8 +208,11 @@ class TestCategories:
         CreateTransaction(accounts, categories, transactions).execute(
             USER,
             CreateTransactionInput(
-                account_id=acct.id, type=TransactionType.EXPENSE,
-                amount_minor=100, date=date(2026, 3, 15), category_id=cat.id,
+                account_id=acct.id,
+                type=TransactionType.EXPENSE,
+                amount_minor=100,
+                date=date(2026, 3, 15),
+                category_id=cat.id,
             ),
         )
         # Wire category-usage check to the transaction repo.
@@ -203,6 +229,19 @@ class TestBudgets:
             USER, CreateCategoryInput(name="Зарплата", type=TransactionType.INCOME)
         )
         with pytest.raises(ValidationError):
-            CreateBudget(budgets, categories).execute(
+            CreateBudget(budgets, categories, InMemoryProfileRepository()).execute(
                 USER, CreateBudgetInput(category_id=income.id, amount_minor=1000_00)
             )
+
+    def test_budget_uses_profile_base_currency(self):
+        budgets = InMemoryBudgetRepository()
+        categories = InMemoryCategoryRepository()
+        profiles = InMemoryProfileRepository()
+        profiles.add(Profile(user_id=USER, base_currency=CurrencyCode("USD")))
+        food = CreateCategory(categories).execute(
+            USER, CreateCategoryInput(name="Еда", type=TransactionType.EXPENSE)
+        )
+        budget = CreateBudget(budgets, categories, profiles).execute(
+            USER, CreateBudgetInput(category_id=food.id, amount_minor=1000_00)
+        )
+        assert budget.amount.currency == "USD"

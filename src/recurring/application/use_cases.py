@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from datetime import date
 from uuid import UUID
 
@@ -9,7 +11,6 @@ from dateutil.relativedelta import relativedelta
 
 from finances.application.ports import AccountRepository, TransactionRepository
 from finances.domain.entities import Transaction
-from finances.domain.enums import TransactionType
 from finances.domain.exceptions import AccountNotFoundError
 from recurring.application.dto import (
     CreateRecurringInput,
@@ -21,9 +22,13 @@ from recurring.application.ports import RecurringTransactionRepository
 from recurring.domain.entities import RecurringTransaction
 from recurring.domain.enums import RecurringFrequency
 from recurring.domain.exceptions import RecurringTransactionNotFoundError
+from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.clock import Clock
 from shared.domain.money import Money
+from shared.exceptions import DomainError
+
+logger = logging.getLogger(__name__)
 
 
 def _dto(r: RecurringTransaction) -> RecurringDTO:
@@ -40,16 +45,36 @@ def _dto(r: RecurringTransaction) -> RecurringDTO:
     )
 
 
-def _advance(next_run: date, frequency: RecurringFrequency) -> date:
-    if frequency is RecurringFrequency.WEEKLY:
-        return next_run + relativedelta(weeks=1)
-    if frequency is RecurringFrequency.MONTHLY:
-        return next_run + relativedelta(months=1)
-    return next_run + relativedelta(years=1)
+_STEP = {
+    RecurringFrequency.WEEKLY: relativedelta(weeks=1),
+    RecurringFrequency.MONTHLY: relativedelta(months=1),
+    RecurringFrequency.YEARLY: relativedelta(years=1),
+}
+
+#: Safety cap on back-filled occurrences per template and run.
+MAX_OCCURRENCES_PER_RUN = 400
+
+
+def _shift(anchor: date, frequency: RecurringFrequency, steps: int) -> date:
+    # Offsets are taken from the anchor, not chained, so a template on the 31st
+    # does not drift to the 28th after February.
+    return anchor + _STEP[frequency] * steps
+
+
+def _occurrences(anchor: date, frequency: RecurringFrequency, today: date) -> list[date]:
+    result: list[date] = []
+    while len(result) < MAX_OCCURRENCES_PER_RUN:
+        on = _shift(anchor, frequency, len(result))
+        if on > today:
+            break
+        result.append(on)
+    return result
 
 
 class CreateRecurring:
-    def __init__(self, recurring: RecurringTransactionRepository, accounts: AccountRepository) -> None:
+    def __init__(
+        self, recurring: RecurringTransactionRepository, accounts: AccountRepository
+    ) -> None:
         self._recurring = recurring
         self._accounts = accounts
 
@@ -72,34 +97,30 @@ class CreateRecurring:
 
 
 class UpdateRecurring:
-    def __init__(self, recurring: RecurringTransactionRepository, accounts: AccountRepository) -> None:
+    def __init__(
+        self, recurring: RecurringTransactionRepository, accounts: AccountRepository
+    ) -> None:
         self._recurring = recurring
         self._accounts = accounts
 
-    def execute(self, user_id: UUID, recurring_id: UUID, data: UpdateRecurringInput) -> RecurringDTO:
+    def execute(
+        self, user_id: UUID, recurring_id: UUID, data: UpdateRecurringInput
+    ) -> RecurringDTO:
         r = self._recurring.get_by_id(recurring_id, user_id)
         if r is None:
             raise RecurringTransactionNotFoundError(recurring_id)
-        account_id = data.account_id if data.account_id is not None else r.account_id
-        account = self._accounts.get_by_id(account_id, user_id)
-        if account is None:
-            raise AccountNotFoundError(account_id)
-        updated = RecurringTransaction(
-            id=r.id,
-            user_id=user_id,
-            name=data.name if data.name is not None else r.name,
-            amount=(
-                r.amount
-                if data.amount_minor is None
-                else Money.from_minor_units(data.amount_minor, account.currency.value)
-            ),
-            type=r.type,
-            account_id=account_id,
-            category_id=r.category_id if data.category_id is None else data.category_id,
-            frequency=data.frequency if data.frequency is not None else r.frequency,
-            next_run=data.next_run if data.next_run is not None else r.next_run,
-            is_active=r.is_active if data.is_active is None else data.is_active,
+        updated = apply_patch(
+            r,
+            data,
+            fields={"amount_minor": ("amount", lambda _: r.amount)},
+            nullable={"category_id"},
         )
+        account = self._accounts.get_by_id(updated.account_id, user_id)
+        if account is None:
+            raise AccountNotFoundError(updated.account_id)
+        # Keep the amount in the (possibly new) account's currency.
+        minor = r.amount.to_minor_units() if data.amount_minor is None else data.amount_minor
+        updated = replace(updated, amount=Money.from_minor_units(minor, account.currency.value))
         return _dto(self._recurring.update(updated))
 
 
@@ -111,12 +132,16 @@ class ToggleRecurring:
         r = self._recurring.get_by_id(recurring_id, user_id)
         if r is None:
             raise RecurringTransactionNotFoundError(recurring_id)
-        updated = RecurringTransaction(
-            id=r.id, user_id=r.user_id, name=r.name, amount=r.amount, type=r.type,
-            account_id=r.account_id, category_id=r.category_id, frequency=r.frequency,
-            next_run=r.next_run, is_active=is_active,
-        )
-        return _dto(self._recurring.update(updated))
+        return _dto(self._recurring.update(replace(r, is_active=is_active)))
+
+
+class DeleteRecurring:
+    def __init__(self, recurring: RecurringTransactionRepository) -> None:
+        self._recurring = recurring
+
+    def execute(self, user_id: UUID, recurring_id: UUID) -> None:
+        if not self._recurring.delete(recurring_id, user_id):
+            raise RecurringTransactionNotFoundError(recurring_id)
 
 
 class ListRecurring:
@@ -128,53 +153,61 @@ class ListRecurring:
 
 
 class RunDueRecurring:
+    """Materialise every due occurrence of every active template.
+
+    Missed occurrences (e.g. the scheduler was down) are back-filled with their
+    own dates. Each template runs in its own unit of work, so one failure does
+    not roll back the others; the ``(recurring_source_id, date)`` uniqueness
+    constraint keeps concurrent runs idempotent.
+    """
+
     def __init__(
         self,
         recurring: RecurringTransactionRepository,
         transactions: TransactionRepository,
-        accounts: AccountRepository,
         uow: UnitOfWork,
         clock: Clock,
     ) -> None:
         self._recurring = recurring
         self._transactions = transactions
-        self._accounts = accounts
         self._uow = uow
         self._clock = clock
 
     def execute(self) -> RunDueRecurringResultDTO:
         today = self._clock.now().date()
-        due = self._recurring.list_due(today)
         generated = 0
         skipped = 0
-        with self._uow:
-            for r in due:
-                if not r.is_active:
-                    skipped += 1
-                    continue
-                if self._transactions.exists_for_source(r.user_id, r.id, today):
-                    skipped += 1
-                    continue
-                account = self._accounts.get_by_id(r.account_id, r.user_id)
-                if account is None or account.is_archived:
-                    skipped += 1
-                    continue
-                self._transactions.add(
-                    Transaction(
-                        user_id=r.user_id,
-                        account_id=r.account_id,
-                        category_id=r.category_id,
-                        type=r.type,
-                        amount=r.amount,
-                        date=today,
-                        recurring_source_id=r.id,
-                    )
-                )
-                advanced = RecurringTransaction(
-                    id=r.id, user_id=r.user_id, name=r.name, amount=r.amount, type=r.type,
-                    account_id=r.account_id, category_id=r.category_id, frequency=r.frequency,
-                    next_run=_advance(today, r.frequency), is_active=r.is_active,
-                )
-                self._recurring.update(advanced)
-                generated += 1
+        for template in self._recurring.list_due(today):
+            try:
+                with self._uow:
+                    created, existing = self._run(template, today)
+            except DomainError:
+                logger.exception("Recurring template %s failed", template.id)
+                skipped += 1
+                continue
+            generated += created
+            skipped += existing
         return RunDueRecurringResultDTO(generated=generated, skipped=skipped)
+
+    def _run(self, template: RecurringTransaction, today: date) -> tuple[int, int]:
+        created = existing = 0
+        occurrences = _occurrences(template.next_run, template.frequency, today)
+        for on in occurrences:
+            if self._transactions.exists_for_source(template.user_id, template.id, on):
+                existing += 1
+                continue
+            self._transactions.add(
+                Transaction(
+                    user_id=template.user_id,
+                    account_id=template.account_id,
+                    category_id=template.category_id,
+                    type=template.type,
+                    amount=template.amount,
+                    date=on,
+                    recurring_source_id=template.id,
+                )
+            )
+            created += 1
+        next_run = _shift(template.next_run, template.frequency, len(occurrences))
+        self._recurring.update(replace(template, next_run=next_run))
+        return created, existing

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from django.contrib.auth.hashers import check_password, make_password
@@ -17,7 +17,6 @@ from accounts.application.ports import (
     SocialIdentity,
     SocialIdentityProvider,
     TokenPair,
-    UserRepository,
 )
 from accounts.domain.entities import User
 from accounts.infrastructure.orm.models import User as UserORM
@@ -32,7 +31,7 @@ class DjangoPasswordHasher(PasswordHasher):
 
 
 def _to_datetime(timestamp: int) -> datetime:
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    return datetime.fromtimestamp(timestamp, tz=UTC)
 
 
 class SimpleJWTTokenService(AuthTokenService):

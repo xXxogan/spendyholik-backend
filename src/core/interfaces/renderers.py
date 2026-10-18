@@ -79,19 +79,26 @@ def category_to_view(dto) -> dict[str, Any]:
     }
 
 
-def transaction_to_view(dto, *, account_name: str | None = None, category_name: str | None = None) -> dict[str, Any]:
-    if dto.type.value == "transfer":
-        title = account_name or "Перевод"
-    else:
-        title = category_name or ""
-    subtitle = account_name or ""
-    data = {
+def transaction_to_view(dto) -> dict[str, Any]:
+    labels = dto.labels
+    account_name = labels.account_name if labels else None
+    category_name = labels.category_name if labels else None
+    is_transfer = dto.type.value == "transfer"
+    title = (account_name or "Перевод") if is_transfer else (category_name or "")
+    return {
         "id": str(dto.id),
         "type": dto.type.value,
         "amount": money_to_view(dto.amount),
         "title": title,
-        "subtitle": subtitle,
-        "category": {"id": str(dto.category_id), "name": category_name} if dto.category_id else None,
+        "subtitle": account_name or "",
+        "category": {
+            "id": str(dto.category_id),
+            "name": category_name,
+            "icon": labels.category_icon if labels else None,
+            "color": labels.category_color if labels else None,
+        }
+        if dto.category_id
+        else None,
         "account": {"id": str(dto.account_id), "name": account_name},
         "date": _iso_date(dto.date),
         "time": _iso_time(dto.time),
@@ -101,7 +108,6 @@ def transaction_to_view(dto, *, account_name: str | None = None, category_name: 
         if dto.transfer_to_account_id
         else None,
     }
-    return data
 
 
 def budget_to_view(dto) -> dict[str, Any]:
@@ -182,6 +188,7 @@ def dashboard_to_view(dto) -> dict[str, Any]:
             }
             for b in dto.budgets
         ],
+        "excluded_currencies": dto.excluded_currencies,
     }
 
 

@@ -37,18 +37,16 @@ class Money:
     # Constructors
     # ------------------------------------------------------------------
     @classmethod
-    def zero(cls, currency: str) -> "Money":
+    def zero(cls, currency: str) -> Money:
         return cls(Decimal("0.00"), currency)
 
     @classmethod
-    def from_minor_units(cls, minor_units: int, currency: str) -> "Money":
+    def from_minor_units(cls, minor_units: int, currency: str) -> Money:
         return cls(Decimal(minor_units) / MINOR_UNIT_FACTOR, currency)
 
     def to_minor_units(self) -> int:
         """Return the amount in minor units (kopecks/cents) as an integer."""
-        return int(
-            (self.amount * MINOR_UNIT_FACTOR).to_integral_value(rounding=ROUND_HALF_UP)
-        )
+        return int((self.amount * MINOR_UNIT_FACTOR).to_integral_value(rounding=ROUND_HALF_UP))
 
     # ------------------------------------------------------------------
     # Predicates
@@ -65,33 +63,33 @@ class Money:
     # ------------------------------------------------------------------
     # Arithmetic
     # ------------------------------------------------------------------
-    def _ensure_same_currency(self, other: "Money") -> None:
+    def _ensure_same_currency(self, other: Money) -> None:
         if self.currency != other.currency:
             raise CurrencyMismatchError(self.currency, other.currency)
 
-    def __add__(self, other: object) -> "Money":
+    def __add__(self, other: object) -> Money:
         if not isinstance(other, Money):
             return NotImplemented
         self._ensure_same_currency(other)
         return Money(self.amount + other.amount, self.currency)
 
-    def __sub__(self, other: object) -> "Money":
+    def __sub__(self, other: object) -> Money:
         if not isinstance(other, Money):
             return NotImplemented
         self._ensure_same_currency(other)
         return Money(self.amount - other.amount, self.currency)
 
-    def __neg__(self) -> "Money":
+    def __neg__(self) -> Money:
         return Money(-self.amount, self.currency)
 
-    def __mul__(self, scalar: object) -> "Money":
+    def __mul__(self, scalar: object) -> Money:
         if isinstance(scalar, Money):
             raise TypeError("Cannot multiply two Money values.")
         return Money(self.amount * Decimal(str(scalar)), self.currency)
 
     __rmul__ = __mul__
 
-    def __truediv__(self, scalar: object) -> "Money":
+    def __truediv__(self, scalar: object) -> Money:
         if isinstance(scalar, Money):
             raise TypeError("Cannot divide Money by Money.")
         return Money(self.amount / Decimal(str(scalar)), self.currency)

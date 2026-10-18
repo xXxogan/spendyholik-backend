@@ -1,0 +1,11 @@
+# Server-specific overrides. On the VPS copy this file to values-server.yaml
+# (git-ignored) next to it and fill in your values — see DEPLOY.md, step 4.
+# For the domain + HTTPS stage see DEPLOY.md, step 12.
+
+image:
+  # ghcr.io/<your GitHub username in lowercase>/spendyholik-backend
+  repository: ghcr.io/CHANGE_ME/spendyholik-backend
+
+env:
+  # The server IP for now; your API domain later (e.g. api.example.com).
+  ALLOWED_HOSTS: "CHANGE_ME_VPS_IP"

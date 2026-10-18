@@ -104,7 +104,7 @@ class ProfileDTO:
 @dataclass(frozen=True, slots=True)
 class AuthResultDTO:
     user: UserDTO
-    tokens: "object"  # TokenPair
+    tokens: object  # TokenPair
 
 
 @dataclass(frozen=True, slots=True)

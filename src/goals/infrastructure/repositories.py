@@ -31,17 +31,18 @@ class DjangoGoalRepository(GoalRepository):
         return [goal_to_domain(g) for g in GoalORM.objects.filter(user_id=user_id)]
 
     def update(self, goal: Goal) -> Goal:
-        orm = GoalORM.objects.get(pk=goal.id, user_id=goal.user_id)
-        orm.name = goal.name
-        orm.target_amount = goal.target_amount.amount
-        orm.deadline = goal.deadline
-        orm.icon = goal.icon
-        orm.color = goal.color
-        orm.save()
+        GoalORM.objects.filter(pk=goal.id, user_id=goal.user_id).update(
+            name=goal.name,
+            target_amount=goal.target_amount.amount,
+            deadline=goal.deadline,
+            icon=goal.icon,
+            color=goal.color,
+        )
         return goal
 
-    def delete(self, goal_id: UUID, user_id: UUID) -> None:
-        GoalORM.objects.filter(pk=goal_id, user_id=user_id).delete()
+    def delete(self, goal_id: UUID, user_id: UUID) -> bool:
+        deleted, _ = GoalORM.objects.filter(pk=goal_id, user_id=user_id).delete()
+        return deleted > 0
 
 
 class DjangoGoalContributionRepository(GoalContributionRepository):
@@ -51,12 +52,25 @@ class DjangoGoalContributionRepository(GoalContributionRepository):
 
     def list_for_goal(self, goal_id: UUID) -> list[GoalContribution]:
         return [
-            contribution_to_domain(c)
-            for c in GoalContributionORM.objects.filter(goal_id=goal_id)
+            contribution_to_domain(c) for c in GoalContributionORM.objects.filter(goal_id=goal_id)
         ]
 
     def sum_for_goal(self, goal_id: UUID) -> Money:
-        goal = GoalORM.objects.filter(pk=goal_id).first()
-        currency = goal.currency if goal else DEFAULT_CURRENCY
-        total = GoalContributionORM.objects.filter(goal_id=goal_id).aggregate(total=Sum("amount"))["total"]
-        return Money(Decimal(total or 0), currency)
+        row = (
+            GoalORM.objects.filter(pk=goal_id)
+            .annotate(total=Sum("contributions__amount"))
+            .values("currency", "total")
+            .first()
+        )
+        if row is None:
+            return Money.zero(DEFAULT_CURRENCY)
+        return Money(Decimal(row["total"] or 0), row["currency"])
+
+    def sums_for_goals(self, goal_ids: list[UUID]) -> dict[UUID, Money]:
+        rows = (
+            GoalContributionORM.objects.filter(goal_id__in=goal_ids)
+            .order_by()
+            .values("goal_id", "currency")
+            .annotate(total=Sum("amount"))
+        )
+        return {r["goal_id"]: Money(Decimal(r["total"]), r["currency"]) for r in rows}

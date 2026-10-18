@@ -5,7 +5,7 @@ from uuid import UUID
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
-from core.interfaces.api import BaseAPIView, created, ok
+from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
 from core.interfaces.renderers import debt_to_view, money_to_view
 from debts.application.dto import CreateDebtInput, RepayDebtInput, UpdateDebtInput
@@ -35,6 +35,10 @@ class DebtDetailView(BaseAPIView):
     def patch(self, request: Request, pk):
         data = self.parse(UpdateDebtInput, request.data)
         return ok(debt_to_view(container.update_debt().execute(request.user.id, _uuid(pk), data)))
+
+    def delete(self, request: Request, pk):
+        container.delete_debt().execute(request.user.id, _uuid(pk))
+        return no_content()
 
 
 class DebtRepayView(BaseAPIView):

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: spendyholik-backend
+description: Backend Helm chart for the «SpendyHolik» personal finance app
+type: application
+version: 0.2.0
+appVersion: "0.1.0"
+# PostgreSQL and Redis are bundled as plain manifests on the official images
+# (templates/postgres.yaml, templates/redis.yaml); disable them to use
+# external/managed services instead.

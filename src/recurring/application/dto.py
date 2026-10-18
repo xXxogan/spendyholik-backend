@@ -55,3 +55,9 @@ class RecurringDTO:
 class RunDueRecurringResultDTO:
     generated: int
     skipped: int
+
+
+class ToggleRecurringInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    is_active: bool = True

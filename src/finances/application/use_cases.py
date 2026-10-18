@@ -3,8 +3,10 @@ transactions, budgets)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
+from accounts.application.ports import ProfileRepository
 from finances.application.dto import (
     AccountDTO,
     BudgetDTO,
@@ -15,6 +17,7 @@ from finances.application.dto import (
     CreateTransactionInput,
     ListTransactionsInput,
     TransactionDTO,
+    TransactionLabels,
     TransactionPageDTO,
     UpdateAccountInput,
     UpdateBudgetInput,
@@ -39,6 +42,7 @@ from finances.domain.exceptions import (
     TransactionNotFoundError,
 )
 from finances.domain.value_objects import CategoryColor
+from shared.application.patch import apply_patch
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import DEFAULT_CURRENCY, Money
 from shared.exceptions import ValidationError
@@ -74,7 +78,7 @@ def _category_dto(c: Category) -> CategoryDTO:
     )
 
 
-def _transaction_dto(t: Transaction) -> TransactionDTO:
+def _transaction_dto(t: Transaction, labels: TransactionLabels | None = None) -> TransactionDTO:
     return TransactionDTO(
         id=t.id,
         account_id=t.account_id,
@@ -86,6 +90,7 @@ def _transaction_dto(t: Transaction) -> TransactionDTO:
         note=t.note,
         receipt_id=t.receipt_id,
         transfer_to_account_id=t.transfer_to_account_id,
+        labels=labels,
     )
 
 
@@ -135,21 +140,18 @@ class UpdateAccount:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
-        credit_limit = account.credit_limit
-        if data.credit_limit_minor is not None:
-            credit_limit = Money.from_minor_units(data.credit_limit_minor, account.currency.value)
-        updated = Account(
-            id=account.id,
-            user_id=user_id,
-            name=data.name if data.name is not None else account.name,
-            type=data.type if data.type is not None else account.type,
-            currency=account.currency,
-            initial_balance=account.initial_balance,
-            color=CategoryColor(data.color) if data.color is not None else account.color,
-            last4=account.last4 if data.last4 is None else data.last4,
-            credit_limit=credit_limit,
-            interest_rate=data.interest_rate if data.interest_rate is not None else account.interest_rate,
-            is_archived=account.is_archived,
+        currency = account.currency.value
+        updated = apply_patch(
+            account,
+            data,
+            fields={
+                "color": ("color", CategoryColor),
+                "credit_limit_minor": (
+                    "credit_limit",
+                    lambda minor: Money.from_minor_units(minor, currency),
+                ),
+            },
+            nullable={"last4", "credit_limit_minor"},
         )
         return _account_dto(self._accounts.update(updated))
 
@@ -162,20 +164,7 @@ class ArchiveAccount:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
-        archived = Account(
-            id=account.id,
-            user_id=user_id,
-            name=account.name,
-            type=account.type,
-            currency=account.currency,
-            initial_balance=account.initial_balance,
-            color=account.color,
-            last4=account.last4,
-            credit_limit=account.credit_limit,
-            interest_rate=account.interest_rate,
-            is_archived=True,
-        )
-        return _account_dto(self._accounts.update(archived))
+        return _account_dto(self._accounts.update(replace(account, is_archived=True)))
 
 
 class ListAccounts:
@@ -239,24 +228,15 @@ class UpdateCategory:
             raise CategoryNotFoundError(category_id)
         if category.is_system:
             raise CategoryInUseError("System categories are read-only.")
-        parent_id = category.parent_id if data.parent_id is None else data.parent_id
-        if parent_id is not None:
-            if parent_id == category_id:
+        if data.parent_id is not None and data.parent_id != category.parent_id:
+            if data.parent_id == category_id:
                 raise CategoryCycleError
-            parent = self._categories.get_by_id(parent_id, user_id)
-            if parent is None:
-                raise CategoryNotFoundError(parent_id)
-            if self._categories.is_ancestor(user_id, category_id, parent_id):
+            if self._categories.get_by_id(data.parent_id, user_id) is None:
+                raise CategoryNotFoundError(data.parent_id)
+            if self._categories.is_ancestor(user_id, category_id, data.parent_id):
                 raise CategoryCycleError
-        updated = Category(
-            id=category.id,
-            user_id=user_id,
-            name=data.name if data.name is not None else category.name,
-            type=category.type,
-            icon=data.icon if data.icon is not None else category.icon,
-            color=CategoryColor(data.color) if data.color is not None else category.color,
-            parent_id=parent_id,
-            is_system=category.is_system,
+        updated = apply_patch(
+            category, data, fields={"color": ("color", CategoryColor)}, nullable={"parent_id"}
         )
         return _category_dto(self._categories.update(updated))
 
@@ -290,7 +270,9 @@ class _TransactionGuard:
         self._categories = categories
         self._transactions = transactions
 
-    def _require_account(self, user_id: UUID, account_id: UUID, *, allow_archived: bool = False) -> Account:
+    def _require_account(
+        self, user_id: UUID, account_id: UUID, *, allow_archived: bool = False
+    ) -> Account:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
@@ -298,24 +280,43 @@ class _TransactionGuard:
             raise AccountArchivedError
         return account
 
-    def _require_category(self, user_id: UUID, category_id: UUID | None, tx_type: TransactionType) -> None:
+    def _require_category(
+        self, user_id: UUID, category_id: UUID | None, tx_type: TransactionType
+    ) -> None:
         if category_id is None:
             return
         category = self._categories.get_by_id(category_id, user_id)
         if category is None:
             raise CategoryNotFoundError(category_id)
-        if tx_type in (TransactionType.EXPENSE, TransactionType.INCOME) and category.type != tx_type:
-            msg = f"Category type {category.type.value} does not match transaction type {tx_type.value}."
+        if (
+            tx_type in (TransactionType.EXPENSE, TransactionType.INCOME)
+            and category.type != tx_type
+        ):
+            msg = (
+                f"Category type {category.type.value} does not match "
+                f"transaction type {tx_type.value}."
+            )
             raise ValidationError(msg)
 
-    def validate(self, user_id: UUID, data: CreateTransactionInput) -> None:
-        account = self._require_account(user_id, data.account_id)
-        if data.type is TransactionType.TRANSFER:
-            dest = self._require_account(user_id, data.transfer_to_account_id or data.account_id)
+    def validate(
+        self,
+        user_id: UUID,
+        *,
+        account_id: UUID,
+        tx_type: TransactionType,
+        category_id: UUID | None,
+        transfer_to_account_id: UUID | None,
+    ) -> Account:
+        """Check references and return the (source) account."""
+        account = self._require_account(user_id, account_id)
+        if tx_type is TransactionType.TRANSFER and transfer_to_account_id not in (None, account_id):
+            dest = self._require_account(user_id, transfer_to_account_id)
             if dest.currency != account.currency:
                 msg = "Cross-currency transfers are not supported yet."
                 raise ValidationError(msg)
-        self._require_category(user_id, data.category_id, data.type)
+        # A missing or identical destination is rejected by the Transaction entity.
+        self._require_category(user_id, category_id, tx_type)
+        return account
 
 
 class CreateTransaction:
@@ -326,13 +327,16 @@ class CreateTransaction:
         transactions: TransactionRepository,
     ) -> None:
         self._guard = _TransactionGuard(accounts, categories, transactions)
-        self._accounts = accounts
         self._transactions = transactions
 
     def execute(self, user_id: UUID, data: CreateTransactionInput) -> TransactionDTO:
-        self._guard.validate(user_id, data)
-        account = self._accounts.get_by_id(data.account_id, user_id)
-        assert account is not None  # validated above
+        account = self._guard.validate(
+            user_id,
+            account_id=data.account_id,
+            tx_type=data.type,
+            category_id=data.category_id,
+            transfer_to_account_id=data.transfer_to_account_id,
+        )
         transaction = Transaction(
             user_id=user_id,
             account_id=data.account_id,
@@ -352,10 +356,10 @@ class GetTransaction:
         self._transactions = transactions
 
     def execute(self, user_id: UUID, transaction_id: UUID) -> TransactionDTO:
-        tx = self._transactions.get_by_id(transaction_id, user_id)
-        if tx is None:
+        found = self._transactions.get_labeled(transaction_id, user_id)
+        if found is None:
             raise TransactionNotFoundError(transaction_id)
-        return _transaction_dto(tx)
+        return _transaction_dto(*found)
 
 
 class UpdateTransaction:
@@ -366,44 +370,30 @@ class UpdateTransaction:
         transactions: TransactionRepository,
     ) -> None:
         self._guard = _TransactionGuard(accounts, categories, transactions)
-        self._accounts = accounts
         self._transactions = transactions
 
-    def execute(self, user_id: UUID, transaction_id: UUID, data: UpdateTransactionInput) -> TransactionDTO:
+    def execute(
+        self, user_id: UUID, transaction_id: UUID, data: UpdateTransactionInput
+    ) -> TransactionDTO:
         tx = self._transactions.get_by_id(transaction_id, user_id)
         if tx is None:
             raise TransactionNotFoundError(transaction_id)
-        account_id = data.account_id if data.account_id is not None else tx.account_id
-        tx_type = tx.type
-        transfer_to = tx.transfer_to_account_id if data.transfer_to_account_id is None else data.transfer_to_account_id
-        category_id = tx.category_id if data.category_id is None else data.category_id
-        self._guard._require_account(user_id, account_id)
-        if tx_type is TransactionType.TRANSFER:
-            dest = self._guard._require_account(user_id, transfer_to or account_id)
-            src = self._guard._require_account(user_id, account_id)
-            if dest.currency != src.currency:
-                msg = "Cross-currency transfers are not supported yet."
-                raise ValidationError(msg)
-        self._guard._require_category(user_id, category_id, tx_type)
-        account = self._accounts.get_by_id(account_id, user_id)
-        assert account is not None
-        updated = Transaction(
-            id=tx.id,
-            user_id=user_id,
-            account_id=account_id,
-            category_id=category_id,
-            type=tx_type,
-            amount=(
-                tx.amount
-                if data.amount_minor is None
-                else Money.from_minor_units(data.amount_minor, account.currency.value)
-            ),
-            date=data.date if data.date is not None else tx.date,
-            time=tx.time if data.time is None else data.time,
-            note=tx.note if data.note is None else data.note,
-            receipt_id=tx.receipt_id,
-            transfer_to_account_id=transfer_to,
+        # The amount is re-denominated below, once the (possibly new) account is known.
+        draft = apply_patch(
+            tx,
+            data,
+            fields={"amount_minor": ("amount", lambda _: tx.amount)},
+            nullable={"category_id", "time", "transfer_to_account_id"},
         )
+        account = self._guard.validate(
+            user_id,
+            account_id=draft.account_id,
+            tx_type=draft.type,
+            category_id=draft.category_id,
+            transfer_to_account_id=draft.transfer_to_account_id,
+        )
+        minor = tx.amount.to_minor_units() if data.amount_minor is None else data.amount_minor
+        updated = replace(draft, amount=Money.from_minor_units(minor, account.currency.value))
         return _transaction_dto(self._transactions.update(updated))
 
 
@@ -412,10 +402,8 @@ class DeleteTransaction:
         self._transactions = transactions
 
     def execute(self, user_id: UUID, transaction_id: UUID) -> None:
-        tx = self._transactions.get_by_id(transaction_id, user_id)
-        if tx is None:
+        if not self._transactions.delete(transaction_id, user_id):
             raise TransactionNotFoundError(transaction_id)
-        self._transactions.delete(transaction_id, user_id)
 
 
 class ListTransactions:
@@ -435,7 +423,7 @@ class ListTransactions:
             limit=data.limit,
         )
         return TransactionPageDTO(
-            items=[_transaction_dto(t) for t in items],
+            items=[_transaction_dto(t, labels) for t, labels in items],
             next_cursor=next_cursor,
         )
 
@@ -444,9 +432,15 @@ class ListTransactions:
 # Budgets
 # ---------------------------------------------------------------------------
 class CreateBudget:
-    def __init__(self, budgets: BudgetRepository, categories: CategoryRepository) -> None:
+    def __init__(
+        self,
+        budgets: BudgetRepository,
+        categories: CategoryRepository,
+        profiles: ProfileRepository,
+    ) -> None:
         self._budgets = budgets
         self._categories = categories
+        self._profiles = profiles
 
     def execute(self, user_id: UUID, data: CreateBudgetInput) -> BudgetDTO:
         category = self._categories.get_by_id(data.category_id, user_id)
@@ -455,11 +449,13 @@ class CreateBudget:
         if category.type is not TransactionType.EXPENSE:
             msg = "A budget can only target an expense category."
             raise ValidationError(msg)
-        # Budgets are denominated in the user's base currency (RUB by default).
+        # Budgets are denominated in the user's base currency.
+        profile = self._profiles.get_by_user(user_id)
+        currency = profile.base_currency.value if profile else DEFAULT_CURRENCY
         budget = Budget(
             user_id=user_id,
             category_id=data.category_id,
-            amount=Money.from_minor_units(data.amount_minor, DEFAULT_CURRENCY),
+            amount=Money.from_minor_units(data.amount_minor, currency),
             period=data.period,
             start_date=data.start_date,
             is_active=data.is_active,
@@ -476,26 +472,19 @@ class UpdateBudget:
         budget = self._budgets.get_by_id(budget_id, user_id)
         if budget is None:
             raise BudgetNotFoundError(budget_id)
-        category_id = budget.category_id if data.category_id is None else data.category_id
-        category = self._categories.get_by_id(category_id, user_id)
+        currency = budget.amount.currency
+        updated = apply_patch(
+            budget,
+            data,
+            fields={"amount_minor": ("amount", lambda m: Money.from_minor_units(m, currency))},
+            nullable={"start_date"},
+        )
+        category = self._categories.get_by_id(updated.category_id, user_id)
         if category is None:
-            raise CategoryNotFoundError(category_id)
+            raise CategoryNotFoundError(updated.category_id)
         if category.type is not TransactionType.EXPENSE:
             msg = "A budget can only target an expense category."
             raise ValidationError(msg)
-        updated = Budget(
-            id=budget.id,
-            user_id=user_id,
-            category_id=category_id,
-            amount=(
-                budget.amount
-                if data.amount_minor is None
-                else Money.from_minor_units(data.amount_minor, budget.amount.currency)
-            ),
-            period=budget.period if data.period is None else data.period,
-            start_date=budget.start_date if data.start_date is None else data.start_date,
-            is_active=budget.is_active if data.is_active is None else data.is_active,
-        )
         return _budget_dto(self._budgets.update(updated))
 
 
@@ -523,6 +512,5 @@ class DeleteBudget:
         self._budgets = budgets
 
     def execute(self, user_id: UUID, budget_id: UUID) -> None:
-        if self._budgets.get_by_id(budget_id, user_id) is None:
+        if not self._budgets.delete(budget_id, user_id):
             raise BudgetNotFoundError(budget_id)
-        self._budgets.delete(budget_id, user_id)

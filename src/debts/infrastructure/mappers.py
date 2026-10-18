@@ -24,22 +24,34 @@ def debt_to_domain(orm: DebtORM) -> Debt:
 
 def debt_to_orm(d: Debt) -> DebtORM:
     return DebtORM(
-        id=d.id, user_id=d.user_id, person_name=d.person_name,
-        direction=d.direction.value, amount=d.amount.amount,
+        id=d.id,
+        user_id=d.user_id,
+        person_name=d.person_name,
+        direction=d.direction.value,
+        amount=d.amount.amount,
         remaining=d.remaining.amount if d.remaining is not None else d.amount.amount,
-        currency=d.amount.currency, due_date=d.due_date, is_closed=d.is_closed,
+        currency=d.amount.currency,
+        due_date=d.due_date,
+        is_closed=d.is_closed,
     )
 
 
 def payment_to_domain(orm: DebtPaymentORM) -> DebtPayment:
     return DebtPayment(
-        id=orm.id, debt_id=orm.debt_id, account_id=orm.account_id,
-        amount=Money(Decimal(orm.amount), orm.currency), date=orm.date,
+        id=orm.id,
+        debt_id=orm.debt_id,
+        account_id=orm.account_id,
+        amount=Money(Decimal(orm.amount), orm.currency),
+        date=orm.date,
     )
 
 
 def payment_to_orm(p: DebtPayment) -> DebtPaymentORM:
     return DebtPaymentORM(
-        id=p.id, debt_id=p.debt_id, account_id=p.account_id,
-        amount=p.amount.amount, currency=p.amount.currency, date=p.date,
+        id=p.id,
+        debt_id=p.debt_id,
+        account_id=p.account_id,
+        amount=p.amount.amount,
+        currency=p.amount.currency,
+        date=p.date,
     )

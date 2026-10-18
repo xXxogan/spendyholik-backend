@@ -1,10 +1,18 @@
-"""Analytics use cases — aggregate over finances data."""
+"""Analytics use cases — aggregate over finances data.
+
+Every amount is reported in the user's base currency; totals in currencies
+without a known exchange rate are left out and listed in ``excluded_currencies``.
+"""
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from uuid import UUID
 
+from dateutil.relativedelta import relativedelta
+
+from accounts.application.ports import ProfileRepository
+from analytics.application.currency import CurrencyConverter, base_currency_for
 from analytics.application.dto import (
     BudgetStatusDTO,
     CategorySpendingDTO,
@@ -16,75 +24,96 @@ from finances.application.ports import (
     AccountRepository,
     BudgetRepository,
     CategoryRepository,
+    ExchangeRateRepository,
     TransactionRepository,
 )
+from finances.domain.entities import Budget
 from finances.domain.enums import BudgetPeriod, TransactionType
 from shared.domain.clock import Clock
-from shared.domain.money import DEFAULT_CURRENCY, Money
+
+#: Upper bound for the monthly trend window.
+MAX_TREND_MONTHS = 36
 
 
-def _zero(currency: str = DEFAULT_CURRENCY) -> Money:
-    return Money.zero(currency)
+def _budget_window_start(budget: Budget, today: date) -> date | None:
+    """First day counted against ``budget`` (``None`` = since the beginning)."""
+    if budget.period is BudgetPeriod.WEEKLY:
+        return today - timedelta(days=today.weekday())
+    if budget.period is BudgetPeriod.ONE_TIME:
+        return budget.start_date
+    return today.replace(day=1)
 
 
-def _first_day_of_month(d: date) -> date:
-    return d.replace(day=1)
+class _AnalyticsUseCase:
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        profiles: ProfileRepository,
+        rates: ExchangeRateRepository,
+    ) -> None:
+        self._transactions = transactions
+        self._profiles = profiles
+        self._rates = rates
+
+    def _converter(self, user_id: UUID) -> CurrencyConverter:
+        return CurrencyConverter(self._rates, base_currency_for(self._profiles, user_id))
 
 
-class GetDashboard:
+class GetDashboard(_AnalyticsUseCase):
     def __init__(
         self,
         accounts: AccountRepository,
         transactions: TransactionRepository,
         budgets: BudgetRepository,
+        profiles: ProfileRepository,
+        rates: ExchangeRateRepository,
         clock: Clock,
     ) -> None:
+        super().__init__(transactions, profiles, rates)
         self._accounts = accounts
-        self._transactions = transactions
         self._budgets = budgets
         self._clock = clock
 
     def execute(self, user_id: UUID) -> DashboardDTO:
+        fx = self._converter(user_id)
         today = self._clock.now().date()
-        month_start = _first_day_of_month(today)
 
-        income_month = self._transactions.total_amount(
-            user_id, type=TransactionType.INCOME, date_from=month_start, date_to=today
-        ) or _zero()
-        expense_month = self._transactions.total_amount(
-            user_id, type=TransactionType.EXPENSE, date_from=month_start, date_to=today
-        ) or _zero()
+        month = self._transactions.totals_by_type(
+            user_id, date_from=today.replace(day=1), date_to=today
+        )
+        income_month = fx.total(month.get(TransactionType.INCOME))
+        expense_month = fx.total(month.get(TransactionType.EXPENSE))
 
         # Total balance: initial balances + all income − all expenses (transfers net to zero).
-        initial = sum(
-            (a.initial_balance for a in self._accounts.list_for_user(user_id)),
-            _zero(),
+        all_time = self._transactions.totals_by_type(user_id)
+        initial = fx.sum(a.initial_balance for a in self._accounts.list_for_user(user_id))
+        total_balance = (
+            initial
+            + fx.total(all_time.get(TransactionType.INCOME))
+            - fx.total(all_time.get(TransactionType.EXPENSE))
         )
-        total_income = self._transactions.total_amount(user_id, type=TransactionType.INCOME) or _zero()
-        total_expense = self._transactions.total_amount(user_id, type=TransactionType.EXPENSE) or _zero()
-        total_balance = initial + total_income - total_expense
 
-        budget_statuses: list[BudgetStatusDTO] = []
-        for budget in self._budgets.list_for_user(user_id):
-            if not budget.is_active:
-                continue
-            spent = self._transactions.total_amount(
-                user_id,
-                type=TransactionType.EXPENSE,
-                category_id=budget.category_id,
-                date_from=month_start,
-                date_to=today,
-            ) or _zero(budget.amount.currency)
-            remaining = budget.amount - spent
-            ratio = 0.0 if budget.amount.is_zero() else float(spent.amount / budget.amount.amount)
+        # One aggregate per distinct budget window instead of one per budget.
+        active = [b for b in self._budgets.list_for_user(user_id) if b.is_active]
+        spent_by_window = {
+            start: self._transactions.sum_by_category(
+                user_id, type=TransactionType.EXPENSE, date_from=start, date_to=today
+            )
+            for start in {_budget_window_start(b, today) for b in active}
+        }
+        budget_statuses = []
+        for budget in active:
+            window = spent_by_window[_budget_window_start(budget, today)]
+            spent = fx.total(window.get(budget.category_id))
+            limit = fx.total({budget.amount.currency: budget.amount})
             budget_statuses.append(
                 BudgetStatusDTO(
                     budget_id=budget.id,
                     category_id=budget.category_id,
-                    limit=budget.amount,
+                    limit=limit,
                     spent=spent,
-                    remaining=remaining,
-                    ratio=ratio,
+                    remaining=limit - spent,
+                    ratio=0.0 if limit.is_zero() else float(spent.amount / limit.amount),
                 )
             )
 
@@ -94,73 +123,87 @@ class GetDashboard:
             expense_this_month=expense_month,
             net_this_month=income_month - expense_month,
             budgets=budget_statuses,
+            excluded_currencies=sorted(fx.excluded),
         )
 
 
-class GetSummary:
-    def __init__(self, transactions: TransactionRepository) -> None:
-        self._transactions = transactions
+class GetSummary(_AnalyticsUseCase):
+    def execute(
+        self, user_id: UUID, date_from: date | None = None, date_to: date | None = None
+    ) -> SummaryDTO:
+        fx = self._converter(user_id)
+        totals = self._transactions.totals_by_type(user_id, date_from=date_from, date_to=date_to)
+        income = fx.total(totals.get(TransactionType.INCOME))
+        expense = fx.total(totals.get(TransactionType.EXPENSE))
+        return SummaryDTO(
+            income=income,
+            expense=expense,
+            net=income - expense,
+            excluded_currencies=sorted(fx.excluded),
+        )
 
-    def execute(self, user_id: UUID, date_from: date | None = None, date_to: date | None = None) -> SummaryDTO:
-        income = self._transactions.total_amount(
-            user_id, type=TransactionType.INCOME, date_from=date_from, date_to=date_to
-        ) or _zero()
-        expense = self._transactions.total_amount(
-            user_id, type=TransactionType.EXPENSE, date_from=date_from, date_to=date_to
-        ) or _zero()
-        return SummaryDTO(income=income, expense=expense, net=income - expense)
 
-
-class GetSpendingByCategory:
-    def __init__(self, transactions: TransactionRepository, categories: CategoryRepository) -> None:
-        self._transactions = transactions
+class GetSpendingByCategory(_AnalyticsUseCase):
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        categories: CategoryRepository,
+        profiles: ProfileRepository,
+        rates: ExchangeRateRepository,
+    ) -> None:
+        super().__init__(transactions, profiles, rates)
         self._categories = categories
 
-    def execute(self, user_id: UUID, date_from: date | None = None, date_to: date | None = None) -> list[CategorySpendingDTO]:
+    def execute(
+        self, user_id: UUID, date_from: date | None = None, date_to: date | None = None
+    ) -> list[CategorySpendingDTO]:
+        fx = self._converter(user_id)
         sums = self._transactions.sum_by_category(
             user_id, type=TransactionType.EXPENSE, date_from=date_from, date_to=date_to
         )
-        total = sum(sums.values(), _zero()) if sums else _zero()
-        categories = {c.id: c for c in self._categories.list_for_user(user_id)}
-        result = []
-        for category_id, amount in sorted(sums.items(), key=lambda kv: kv[1].amount, reverse=True):
-            name = categories.get(category_id)
-            result.append(
-                CategorySpendingDTO(
-                    category_id=category_id,
-                    category_name=name.name if name else "—",
-                    amount=amount,
-                    ratio=0.0 if total.is_zero() else float(amount.amount / total.amount),
-                )
+        amounts = {category_id: fx.total(totals) for category_id, totals in sums.items()}
+        total = fx.sum(amounts.values())
+        names = {c.id: c.name for c in self._categories.list_for_user(user_id)}
+        return [
+            CategorySpendingDTO(
+                category_id=category_id,
+                category_name=names.get(category_id, "—"),
+                amount=amount,
+                ratio=0.0 if total.is_zero() else float(amount.amount / total.amount),
             )
-        return result
+            for category_id, amount in sorted(
+                amounts.items(), key=lambda kv: kv[1].amount, reverse=True
+            )
+        ]
 
 
-class GetMonthlyTrend:
-    def __init__(self, transactions: TransactionRepository, clock: Clock) -> None:
-        self._transactions = transactions
+class GetMonthlyTrend(_AnalyticsUseCase):
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        profiles: ProfileRepository,
+        rates: ExchangeRateRepository,
+        clock: Clock,
+    ) -> None:
+        super().__init__(transactions, profiles, rates)
         self._clock = clock
 
     def execute(self, user_id: UUID, months: int = 6) -> list[MonthlyTrendPointDTO]:
-        from dateutil.relativedelta import relativedelta
-
-        today = self._clock.now().date()
-        start = _first_day_of_month(today - relativedelta(months=months - 1))
-        income = dict(self._transactions.monthly_totals(
-            user_id, type=TransactionType.INCOME, date_from=start, date_to=today
-        ))
-        expense = dict(self._transactions.monthly_totals(
-            user_id, type=TransactionType.EXPENSE, date_from=start, date_to=today
-        ))
+        months = min(max(months, 1), MAX_TREND_MONTHS)
+        fx = self._converter(user_id)
+        current = self._clock.now().date().replace(day=1)
+        start = current - relativedelta(months=months - 1)
+        totals = self._transactions.monthly_totals(
+            user_id, date_from=start, date_to=self._clock.now().date()
+        )
         points = []
-        cursor = start
-        while cursor <= _first_day_of_month(today):
+        for offset in range(months):
+            month = start + relativedelta(months=offset)
             points.append(
                 MonthlyTrendPointDTO(
-                    month=cursor,
-                    income=income.get(cursor, _zero()),
-                    expense=expense.get(cursor, _zero()),
+                    month=month,
+                    income=fx.total(totals.get((month, TransactionType.INCOME))),
+                    expense=fx.total(totals.get((month, TransactionType.EXPENSE))),
                 )
             )
-            cursor = cursor + relativedelta(months=1)
         return points

@@ -15,7 +15,7 @@ class DjangoUnitOfWork(UnitOfWork):
     def __init__(self) -> None:
         self._atomic: transaction.Atomic | None = None
 
-    def __enter__(self) -> "DjangoUnitOfWork":
+    def __enter__(self) -> DjangoUnitOfWork:
         self._atomic = transaction.atomic()
         self._atomic.__enter__()
         return self

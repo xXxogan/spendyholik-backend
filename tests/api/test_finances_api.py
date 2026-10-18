@@ -23,14 +23,18 @@ class TestAccounts:
         assert body["initial_balance"]["formatted"]
 
     def test_list_accounts(self, auth_client):
-        auth_client.post("/api/v1/accounts/", {"name": "A", "type": "debit", "currency": "RUB"}, format="json")
+        auth_client.post(
+            "/api/v1/accounts/", {"name": "A", "type": "debit", "currency": "RUB"}, format="json"
+        )
         resp = auth_client.get("/api/v1/accounts/")
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
     def test_ownership_isolation(self, auth_client, db):
         # Create an account for user A.
-        auth_client.post("/api/v1/accounts/", {"name": "A", "type": "debit", "currency": "RUB"}, format="json")
+        auth_client.post(
+            "/api/v1/accounts/", {"name": "A", "type": "debit", "currency": "RUB"}, format="json"
+        )
         account_id = auth_client.get("/api/v1/accounts/").json()[0]["id"]
 
         # User B cannot see user A's account → 404 (not 403).
@@ -50,15 +54,22 @@ class TestAccounts:
 class TestTransactions:
     def test_create_transaction_minor_units_and_viewmodel(self, auth_client):
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Карта", "type": "debit", "currency": "RUB"}, format="json"
+            "/api/v1/accounts/",
+            {"name": "Карта", "type": "debit", "currency": "RUB"},
+            format="json",
         ).json()
         cat = auth_client.post(
             "/api/v1/categories/", {"name": "Еда", "type": "expense"}, format="json"
         ).json()
         resp = auth_client.post(
             "/api/v1/transactions/",
-            {"account_id": acct["id"], "category_id": cat["id"], "type": "expense",
-             "amount_minor": 1240_00, "date": "2026-03-15"},
+            {
+                "account_id": acct["id"],
+                "category_id": cat["id"],
+                "type": "expense",
+                "amount_minor": 1240_00,
+                "date": "2026-03-15",
+            },
             format="json",
         )
         assert resp.status_code == 201
@@ -69,24 +80,37 @@ class TestTransactions:
 
     def test_transfer_requires_destination(self, auth_client):
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Карта", "type": "debit", "currency": "RUB"}, format="json"
+            "/api/v1/accounts/",
+            {"name": "Карта", "type": "debit", "currency": "RUB"},
+            format="json",
         ).json()
         resp = auth_client.post(
             "/api/v1/transactions/",
-            {"account_id": acct["id"], "type": "transfer", "amount_minor": 100, "date": "2026-03-15"},
+            {
+                "account_id": acct["id"],
+                "type": "transfer",
+                "amount_minor": 100,
+                "date": "2026-03-15",
+            },
             format="json",
         )
         assert resp.status_code == 422
 
     def test_transaction_list_cursor(self, auth_client):
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Карта", "type": "debit", "currency": "RUB"}, format="json"
+            "/api/v1/accounts/",
+            {"name": "Карта", "type": "debit", "currency": "RUB"},
+            format="json",
         ).json()
         for i in range(3):
             auth_client.post(
                 "/api/v1/transactions/",
-                {"account_id": acct["id"], "type": "expense", "amount_minor": 100 + i,
-                 "date": f"2026-03-{i + 1:02d}"},
+                {
+                    "account_id": acct["id"],
+                    "type": "expense",
+                    "amount_minor": 100 + i,
+                    "date": f"2026-03-{i + 1:02d}",
+                },
                 format="json",
             )
         resp = auth_client.get("/api/v1/transactions/?limit=2")
@@ -103,6 +127,8 @@ class TestBudgets:
             "/api/v1/categories/", {"name": "Зарплата", "type": "income"}, format="json"
         ).json()
         resp = auth_client.post(
-            "/api/v1/budgets/", {"category_id": income["id"], "amount_minor": 1000_00}, format="json"
+            "/api/v1/budgets/",
+            {"category_id": income["id"], "amount_minor": 1000_00},
+            format="json",
         )
         assert resp.status_code == 422

@@ -52,6 +52,13 @@ class BusinessRuleError(DomainError):
     default_detail = "Business rule violation."
 
 
+class ConflictError(BusinessRuleError):
+    """A write collided with existing state (e.g. a unique constraint)."""
+
+    code = "conflict"
+    default_detail = "Conflicting state."
+
+
 class CurrencyMismatchError(ValidationError):
     code = "currency_mismatch"
     default_detail = "Currency mismatch."

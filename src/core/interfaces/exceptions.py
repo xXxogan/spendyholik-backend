@@ -15,7 +15,9 @@ from rest_framework.views import set_rollback
 from shared.exceptions import DomainError
 
 
-def _error_response(code: str, detail: str, errors: dict | None = None, status: int = 400) -> Response:
+def _error_response(
+    code: str, detail: str, errors: dict | None = None, status: int = 400
+) -> Response:
     return Response(
         {"code": code, "detail": detail, "errors": errors or {}},
         status=status,
@@ -44,19 +46,12 @@ def exception_handler(exc: Exception, context: dict) -> Response | None:
     if response is None:
         return None  # unhandled → 500
 
-    # Re-wrap DRF's own responses into the unified shape.
+    # Re-wrap DRF's own responses (401/403/404/405/429, ...) into the unified shape.
     set_rollback()
+    code = getattr(exc, "default_code", "error")
     data = response.data
     if isinstance(data, dict):
         detail = data.get("detail", "Request failed.")
         errors = {k: v for k, v in data.items() if k != "detail"}
-        if isinstance(detail, dict):
-            # e.g. ValidationError with field-level detail
-            errors = dict(detail)
-            detail = "Validation failed."
-        return _error_response("validation_error", detail, errors, status=response.status_code)
-
-    if isinstance(data, list):
-        return _error_response("validation_error", "Validation failed.", {"non_field": data}, status=response.status_code)
-
-    return _error_response("error", str(data), status=response.status_code)
+        return _error_response(code, str(detail), errors, status=response.status_code)
+    return _error_response(code, str(data), status=response.status_code)

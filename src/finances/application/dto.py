@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date as _date, time as _time
+from datetime import date as _date
+from datetime import time as _time
 from decimal import Decimal
 from uuid import UUID
 
@@ -34,7 +35,6 @@ class UpdateAccountInput(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     type: AccountType | None = None
-    currency: str | None = None
     color: str | None = None
     last4: str | None = None
     credit_limit_minor: int | None = None
@@ -147,6 +147,16 @@ class CategoryDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class TransactionLabels:
+    """Display data of a transaction's account/category, loaded in the same query."""
+
+    account_name: str
+    category_name: str | None = None
+    category_icon: str | None = None
+    category_color: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TransactionDTO:
     id: UUID
     account_id: UUID
@@ -158,6 +168,7 @@ class TransactionDTO:
     note: str
     receipt_id: UUID | None
     transfer_to_account_id: UUID | None
+    labels: TransactionLabels | None = None
 
 
 @dataclass(frozen=True, slots=True)

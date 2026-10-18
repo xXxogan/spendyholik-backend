@@ -26,8 +26,15 @@ def recurring_to_domain(orm: RecurringORM) -> RecurringTransaction:
 
 def recurring_to_orm(r: RecurringTransaction) -> RecurringORM:
     return RecurringORM(
-        id=r.id, user_id=r.user_id, name=r.name,
-        amount=r.amount.amount, currency=r.amount.currency,
-        type=r.type.value, account_id=r.account_id, category_id=r.category_id,
-        frequency=r.frequency.value, next_run=r.next_run, is_active=r.is_active,
+        id=r.id,
+        user_id=r.user_id,
+        name=r.name,
+        amount=r.amount.amount,
+        currency=r.amount.currency,
+        type=r.type.value,
+        account_id=r.account_id,
+        category_id=r.category_id,
+        frequency=r.frequency.value,
+        next_run=r.next_run,
+        is_active=r.is_active,
     )

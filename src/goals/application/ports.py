@@ -23,7 +23,8 @@ class GoalRepository(ABC):
     def update(self, goal: Goal) -> Goal: ...
 
     @abstractmethod
-    def delete(self, goal_id: UUID, user_id: UUID) -> None: ...
+    def delete(self, goal_id: UUID, user_id: UUID) -> bool:
+        """Delete the user\'s entity; ``False`` if it did not exist."""
 
 
 class GoalContributionRepository(ABC):
@@ -35,3 +36,7 @@ class GoalContributionRepository(ABC):
 
     @abstractmethod
     def sum_for_goal(self, goal_id: UUID) -> Money: ...
+
+    @abstractmethod
+    def sums_for_goals(self, goal_ids: list[UUID]) -> dict[UUID, Money]:
+        """Contribution totals in one query; goals without contributions are omitted."""

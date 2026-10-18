@@ -2,8 +2,8 @@ from datetime import date
 
 import pytest
 
-from shared.domain.date_range import DateRange
 from shared.domain.currency_code import CurrencyCode
+from shared.domain.date_range import DateRange
 from shared.exceptions import ValidationError
 
 

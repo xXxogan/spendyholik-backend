@@ -9,9 +9,17 @@ from finances.domain.enums import AccountType, BudgetPeriod, TransactionType
 from finances.domain.value_objects import CategoryColor
 from finances.infrastructure.orm.models import (
     Account as AccountORM,
+)
+from finances.infrastructure.orm.models import (
     Budget as BudgetORM,
+)
+from finances.infrastructure.orm.models import (
     Category as CategoryORM,
+)
+from finances.infrastructure.orm.models import (
     ExchangeRate as ExchangeRateORM,
+)
+from finances.infrastructure.orm.models import (
     Transaction as TransactionORM,
 )
 from shared.domain.currency_code import CurrencyCode
@@ -28,7 +36,9 @@ def account_to_domain(orm: AccountORM) -> Account:
         initial_balance=Money(Decimal(orm.initial_balance), orm.currency),
         color=CategoryColor(orm.color),
         last4=orm.last4,
-        credit_limit=Money(Decimal(orm.credit_limit), orm.currency) if orm.credit_limit is not None else None,
+        credit_limit=Money(Decimal(orm.credit_limit), orm.currency)
+        if orm.credit_limit is not None
+        else None,
         interest_rate=Decimal(orm.interest_rate),
         is_archived=orm.is_archived,
     )

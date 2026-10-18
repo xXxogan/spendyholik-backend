@@ -5,10 +5,14 @@ from uuid import UUID
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
-from core.interfaces.api import BaseAPIView, created, ok
+from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
 from core.interfaces.renderers import recurring_to_view
-from recurring.application.dto import CreateRecurringInput, UpdateRecurringInput
+from recurring.application.dto import (
+    CreateRecurringInput,
+    ToggleRecurringInput,
+    UpdateRecurringInput,
+)
 
 
 def _uuid(value):
@@ -19,11 +23,15 @@ class RecurringListCreateView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request):
-        return ok([recurring_to_view(r) for r in container.list_recurring().execute(request.user.id)])
+        return ok(
+            [recurring_to_view(r) for r in container.list_recurring().execute(request.user.id)]
+        )
 
     def post(self, request: Request):
         data = self.parse(CreateRecurringInput, request.data)
-        return created(recurring_to_view(container.create_recurring().execute(request.user.id, data)))
+        return created(
+            recurring_to_view(container.create_recurring().execute(request.user.id, data))
+        )
 
 
 class RecurringDetailView(BaseAPIView):
@@ -31,18 +39,25 @@ class RecurringDetailView(BaseAPIView):
 
     def patch(self, request: Request, pk):
         data = self.parse(UpdateRecurringInput, request.data)
-        return ok(recurring_to_view(container.update_recurring().execute(request.user.id, _uuid(pk), data)))
+        return ok(
+            recurring_to_view(
+                container.update_recurring().execute(request.user.id, _uuid(pk), data)
+            )
+        )
 
     def delete(self, request: Request, pk):
-        from recurring.infrastructure.repositories import DjangoRecurringTransactionRepository
-
-        DjangoRecurringTransactionRepository().delete(_uuid(pk), request.user.id)
-        return ok({"detail": "ok"})
+        container.delete_recurring().execute(request.user.id, _uuid(pk))
+        return no_content()
 
 
 class RecurringToggleView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request, pk):
-        is_active = bool(request.data.get("is_active", True))
-        return ok(recurring_to_view(container.toggle_recurring().execute(request.user.id, _uuid(pk), is_active)))
+        # Parsed, not bool()-cast: the string "false" must mean False.
+        data = self.parse(ToggleRecurringInput, request.data)
+        return ok(
+            recurring_to_view(
+                container.toggle_recurring().execute(request.user.id, _uuid(pk), data.is_active)
+            )
+        )
