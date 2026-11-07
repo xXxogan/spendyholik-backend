@@ -23,6 +23,12 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
+      {{- with .Values.appArmorProfile }}
+      securityContext:
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: {{ . }}
+      {{- end }}
       containers:
         - name: api
           image: {{ include "spendyholik-backend.image" . }}
@@ -41,6 +47,7 @@ spec:
                   value: {{ include "spendyholik-backend.probeHost" . | quote }}
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /health/
@@ -50,6 +57,7 @@ spec:
                   value: {{ include "spendyholik-backend.probeHost" . | quote }}
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 5
           resources:
             {{- toYaml .Values.resources.api | nindent 12 }}
           {{- if .Values.persistence.media.enabled }}

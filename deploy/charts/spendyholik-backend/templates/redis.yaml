@@ -34,6 +34,12 @@ spec:
         {{- include "spendyholik-backend.selectorLabels" . | nindent 8 }}
         component: redis
     spec:
+      {{- with .Values.appArmorProfile }}
+      securityContext:
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: {{ . }}
+      {{- end }}
       containers:
         - name: redis
           image: {{ .Values.redis.image }}

@@ -9,3 +9,7 @@ image:
 env:
   # The server IP for now; your API domain later (e.g. api.example.com).
   ALLOWED_HOSTS: "CHANGE_ME_VPS_IP"
+
+# Ubuntu 26.04+: load deploy/apparmor/spendyholik-container on the node and
+# uncomment (see DEPLOY.md, step 4).
+# appArmorProfile: spendyholik-container

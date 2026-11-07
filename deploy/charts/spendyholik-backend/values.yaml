@@ -9,6 +9,12 @@ image:
 
 replicaCount: 1
 
+# Name of a node-local AppArmor profile for all pods ("" = runtime default).
+# Ubuntu 26.04 needs "spendyholik-container" (deploy/apparmor/): there the
+# default cri-containerd profile blocks signals between processes of one
+# container, so postgres hangs on startup. Set it in values-server.yaml.
+appArmorProfile: ""
+
 resources:
   api:    { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
   worker: { requests: { cpu: 100m, memory: 192Mi }, limits: { cpu: 500m, memory: 512Mi } }

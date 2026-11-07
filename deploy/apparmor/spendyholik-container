@@ -1,0 +1,58 @@
+# AppArmor profile for the SpendyHolik pods (api, worker, beat, migrate,
+# postgres, redis).
+#
+# It is containerd's default "cri-containerd.apparmor.d" profile with one fix.
+# On Ubuntu 26.04 (AppArmor 5, Linux 7.0) container processes carry the
+# stacked label "<profile>//&unconfined", and the default profile does not
+# let them signal each other, so postgres hangs on startup and gunicorn/celery
+# cannot manage their workers. The rules marked "fix" allow signals between
+# processes of the same container; everything else matches the default.
+#
+# Install on the node (see DEPLOY.md) and enable with
+# `appArmorProfile: spendyholik-container` in values-server.yaml:
+#   sudo install -m 644 deploy/apparmor/spendyholik-container /etc/apparmor.d/
+#   sudo apparmor_parser -r /etc/apparmor.d/spendyholik-container
+
+abi <abi/4.0>,
+
+#include <tunables/global>
+
+profile spendyholik-container flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Host (privileged) processes, runc and containerd may signal container processes.
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  # Container processes may signal each other (fix: also the stacked label).
+  signal (send,receive) peer=spendyholik-container,
+  signal (send,receive) peer="spendyholik-container//&unconfined",
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny mount,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # suppress ptrace denials when using 'ps' inside a container (fix: stacked label)
+  ptrace (trace,read,tracedby,readby) peer=spendyholik-container,
+  ptrace (trace,read,tracedby,readby) peer="spendyholik-container//&unconfined",
+}

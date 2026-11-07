@@ -20,6 +20,12 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
+      {{- with .Values.appArmorProfile }}
+      securityContext:
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: {{ . }}
+      {{- end }}
       containers:
         - name: worker
           image: {{ include "spendyholik-backend.image" . }}

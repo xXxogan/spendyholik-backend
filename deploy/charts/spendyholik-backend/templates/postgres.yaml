@@ -37,6 +37,17 @@ spec:
         {{- include "spendyholik-backend.selectorLabels" . | nindent 8 }}
         component: postgres
     spec:
+      # Start directly as the image's postgres user (uid 999) so the entrypoint
+      # does not have to drop privileges with gosu (one moving part fewer).
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        {{- with .Values.appArmorProfile }}
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: {{ . }}
+        {{- end }}
       containers:
         - name: postgres
           image: {{ $pg.image }}
@@ -56,11 +67,13 @@ spec:
             exec:
               command: ["pg_isready", "-U", {{ $pg.username | quote }}, "-d", {{ $pg.database | quote }}]
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", {{ $pg.username | quote }}]
             initialDelaySeconds: 30
             periodSeconds: 20
+            timeoutSeconds: 5
           resources:
             {{- toYaml $pg.resources | nindent 12 }}
           volumeMounts:

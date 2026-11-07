@@ -119,6 +119,19 @@ env:
 `values-server.yaml` в `.gitignore`: обновления кода его не затрагивают.
 Остальные параметры по умолчанию — в `values.yaml` и `values-prod.yaml`.
 
+> **Ubuntu 26.04 и новее.** Стандартный AppArmor-профиль containerd там
+> запрещает процессам одного контейнера посылать друг другу сигналы:
+> PostgreSQL зависает на старте (в `journalctl -k` — `apparmor="DENIED"
+> operation="signal"`). Загрузите профиль из репозитория:
+>
+> ```bash
+> sudo install -m 644 ~/spendyholik_backend/deploy/apparmor/spendyholik-container /etc/apparmor.d/
+> sudo apparmor_parser -r /etc/apparmor.d/spendyholik-container
+> ```
+>
+> и добавьте в `values-server.yaml` строку `appArmorProfile: spendyholik-container`.
+> Файл в `/etc/apparmor.d/` загружается автоматически после перезагрузки.
+
 ---
 
 ## 5. Секреты
