@@ -4,7 +4,7 @@ transactions, budgets, exchange rates)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, time, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -110,6 +110,8 @@ class Budget:
     amount: Money
     period: BudgetPeriod = BudgetPeriod.MONTHLY
     start_date: date | None = None
+    #: Last day of a ``one_time`` budget (inclusive); unused by recurring periods.
+    end_date: date | None = None
     is_active: bool = True
     id: UUID = field(default_factory=uuid4)
 
@@ -117,6 +119,23 @@ class Budget:
         if not self.amount.is_positive():
             msg = "Budget amount must be positive."
             raise ValidationError(msg)
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            msg = "Budget end date must not precede its start date."
+            raise ValidationError(msg, field="end_date")
+
+    def period_bounds(self, today: date) -> tuple[date | None, date | None]:
+        """First and last day (inclusive) of the period containing ``today``.
+
+        ``None`` means unbounded — only for a ``one_time`` budget without dates.
+        """
+        if self.period is BudgetPeriod.WEEKLY:
+            start = today - timedelta(days=today.weekday())
+            return start, start + timedelta(days=6)
+        if self.period is BudgetPeriod.ONE_TIME:
+            return self.start_date, self.end_date
+        start = today.replace(day=1)
+        next_month = (start + timedelta(days=32)).replace(day=1)
+        return start, next_month - timedelta(days=1)
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,6 +20,18 @@ class CategoryCycleError(ValidationError):
     default_detail = "The category hierarchy would create a cycle."
 
 
+class BudgetAlreadyExistsError(BusinessRuleError):
+    code = "budget_already_exists"
+    default_detail = "The category already has a budget."
+    field = "category_id"
+
+
+class InsufficientFundsError(BusinessRuleError):
+    code = "insufficient_funds"
+    default_detail = "The account balance is too low for this amount."
+    field = "amount_minor"
+
+
 class BudgetNotFoundError(EntityNotFoundError):
     code = "budget_not_found"
 

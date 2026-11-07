@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from finances.application.dto import TransactionLabels
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
-from finances.domain.enums import TransactionType
+from finances.domain.enums import Granularity, TransactionType
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import Money
 
@@ -60,6 +62,10 @@ class CategoryRepository(ABC):
     @abstractmethod
     def has_budgets(self, category_id: UUID, user_id: UUID) -> bool: ...
 
+    @abstractmethod
+    def transaction_counts(self, user_id: UUID) -> dict[UUID, int]:
+        """Number of transactions per category (direct, not including subcategories)."""
+
 
 class TransactionRepository(ABC):
     @abstractmethod
@@ -94,7 +100,10 @@ class TransactionRepository(ABC):
         cursor: str | None = None,
         limit: int = 20,
     ) -> tuple[list[tuple[Transaction, TransactionLabels]], str | None]:
-        """A page ordered newest first (date, then creation) and the next cursor."""
+        """A page ordered newest first (date, then creation) and the next cursor.
+
+        ``category_id`` matches the category and all of its subcategories.
+        """
 
     @abstractmethod
     def exists_for_source(self, user_id: UUID, recurring_id: UUID, date: date) -> bool: ...
@@ -130,6 +139,17 @@ class TransactionRepository(ABC):
     ) -> dict[tuple[date, TransactionType], CurrencyTotals]:
         """Totals keyed by (first day of month, transaction type)."""
 
+    @abstractmethod
+    def period_totals(
+        self,
+        user_id: UUID,
+        *,
+        granularity: Granularity,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> dict[tuple[date, TransactionType], CurrencyTotals]:
+        """Totals keyed by (first day of the day/month/year bucket, transaction type)."""
+
 
 class BudgetRepository(ABC):
     @abstractmethod
@@ -147,6 +167,40 @@ class BudgetRepository(ABC):
     @abstractmethod
     def delete(self, budget_id: UUID, user_id: UUID) -> bool:
         """Delete the user\'s entity; ``False`` if it did not exist."""
+
+    @abstractmethod
+    def exists_for_category(
+        self, user_id: UUID, category_id: UUID, *, exclude_id: UUID | None = None
+    ) -> bool: ...
+
+
+class BalanceReader(ABC):
+    """Account balance movements from every source.
+
+    Transactions (income, expense, both legs of a transfer), goal contributions
+    (money leaves the account) and debt repayments (``i_owe`` leaves the
+    account, ``owed_to_me`` comes in) all move a balance. A balance is the
+    account's initial balance plus its delta.
+    """
+
+    @abstractmethod
+    def deltas(
+        self,
+        user_id: UUID,
+        account_ids: Collection[UUID] | None = None,
+        *,
+        before: date | None = None,
+    ) -> dict[UUID, Decimal]:
+        """Net movement per account (accounts without movements are omitted).
+
+        With ``before``, only movements dated strictly before that day count.
+        """
+
+    @abstractmethod
+    def daily_deltas(
+        self, user_id: UUID, account_id: UUID, date_from: date, date_to: date
+    ) -> dict[date, Decimal]:
+        """Net movement of one account per day within ``[date_from, date_to]``."""
 
 
 class ExchangeRateRepository(ABC):

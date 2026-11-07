@@ -2,12 +2,15 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from accounts.domain.entities import Profile
 from analytics.application.use_cases import (
     GetDashboard,
     GetMonthlyTrend,
     GetSpendingByCategory,
     GetSummary,
+    GetTrend,
 )
 from finances.application.dto import (
     CreateAccountInput,
@@ -17,16 +20,20 @@ from finances.application.dto import (
 )
 from finances.application.use_cases import (
     ArchiveAccount,
+    BudgetReporter,
     CreateAccount,
     CreateBudget,
     CreateCategory,
     CreateTransaction,
 )
 from finances.domain.entities import ExchangeRate
+from finances.domain.enums import Granularity
 from shared.domain.currency_code import CurrencyCode
+from shared.exceptions import ValidationError
 from tests.fakes import (
     FakeClock,
     InMemoryAccountRepository,
+    InMemoryBalanceReader,
     InMemoryBudgetRepository,
     InMemoryCategoryRepository,
     InMemoryExchangeRateRepository,
@@ -91,7 +98,22 @@ class World:
             self.profiles,
             self.rates,
             FakeClock(TODAY),
+            InMemoryBalanceReader(self.transactions),
+            self.categories,
         ).execute(USER)
+
+    def category(self, name, parent_id=None):
+        return CreateCategory(self.categories).execute(
+            USER, CreateCategoryInput(name=name, type="expense", parent_id=parent_id)
+        )
+
+    def create_budget(self):
+        return CreateBudget(
+            self.budgets,
+            self.categories,
+            self.profiles,
+            BudgetReporter(self.transactions, self.categories, self.rates, FakeClock(TODAY)),
+        )
 
 
 class TestGetDashboard:
@@ -132,25 +154,37 @@ class TestGetDashboard:
         w = World()
         old = w.account("RUB", 5000_00)
         w.tx(old.id, "expense", 1000_00, w.food.id)
-        ArchiveAccount(w.accounts).execute(USER, old.id)
+        ArchiveAccount(w.accounts, InMemoryBalanceReader()).execute(USER, old.id)
         dash = w.dashboard()
         assert dash.total_balance.to_minor_units() == 130000_00
         assert dash.expense_this_month.to_minor_units() == 20000_00
 
     def test_budget_windows_follow_period(self):
         w = World()
-        # An expense earlier this month, but before this week's Monday (9th).
+        home = w.category("Дом")
+        # Expenses earlier this month, but before this week's Monday (9th).
         w.tx(w.acct.id, "expense", 1000_00, w.food.id, on=date(2026, 3, 2))
-        create = CreateBudget(w.budgets, w.categories, w.profiles)
+        w.tx(w.acct.id, "expense", 3000_00, home.id, on=date(2026, 3, 2))
+        w.tx(w.acct.id, "expense", 2000_00, home.id)
+        create = w.create_budget()
         create.execute(USER, CreateBudgetInput(category_id=w.food.id, amount_minor=50000_00))
         create.execute(
-            USER,
-            CreateBudgetInput(category_id=w.food.id, amount_minor=25000_00, period="weekly"),
+            USER, CreateBudgetInput(category_id=home.id, amount_minor=2500_00, period="weekly")
         )
         statuses = {b.limit.to_minor_units(): b for b in w.dashboard().budgets}
         assert statuses[50000_00].spent.to_minor_units() == 21000_00  # whole month
-        assert statuses[25000_00].spent.to_minor_units() == 20000_00  # since Monday 9th
-        assert statuses[25000_00].ratio == 0.8
+        assert statuses[2500_00].spent.to_minor_units() == 2000_00  # since Monday 9th
+        assert statuses[2500_00].ratio == 0.8
+
+    def test_budget_counts_subcategories(self):
+        w = World()
+        cafe = w.category("Кафе", parent_id=w.food.id)
+        w.tx(w.acct.id, "expense", 500_00, cafe.id)
+        w.create_budget().execute(
+            USER, CreateBudgetInput(category_id=w.food.id, amount_minor=50000_00)
+        )
+        [status] = w.dashboard().budgets
+        assert status.spent.to_minor_units() == 20500_00
 
 
 class TestSummary:
@@ -171,6 +205,22 @@ class TestSpendingByCategory:
         assert result[0].amount.to_minor_units() == 20000_00
         assert result[0].ratio == 1.0
 
+    def test_subcategories_roll_up_into_their_root(self):
+        w = World()
+        cafe = w.category("Кафе", parent_id=w.food.id)
+        coffee = w.category("Кофе", parent_id=cafe.id)
+        home = w.category("Дом")
+        w.tx(w.acct.id, "expense", 1000_00, coffee.id)
+        w.tx(w.acct.id, "expense", 9000_00, home.id)
+        result = GetSpendingByCategory(w.transactions, w.categories, w.profiles, w.rates).execute(
+            USER
+        )
+        assert [(r.category.name, r.amount.to_minor_units()) for r in result] == [
+            ("Еда", 21000_00),
+            ("Дом", 9000_00),
+        ]
+        assert result[0].category.id == w.food.id
+
 
 class TestMonthlyTrend:
     def test_returns_ordered_points(self):
@@ -187,3 +237,51 @@ class TestMonthlyTrend:
         trend = GetMonthlyTrend(w.transactions, w.profiles, w.rates, FakeClock(TODAY))
         assert len(trend.execute(USER, months=100_000)) == 36
         assert len(trend.execute(USER, months=0)) == 1
+
+
+class TestTrend:
+    def _trend(self, w):
+        return GetTrend(w.transactions, w.profiles, w.rates, FakeClock(TODAY))
+
+    def test_days_default_to_the_last_week(self):
+        w = World()
+        w.tx(w.acct.id, "expense", 100_00, w.food.id, on=date(2026, 3, 10))
+        points = self._trend(w).execute(USER, Granularity.DAY)
+        assert [p.start for p in points][0] == date(2026, 3, 9)
+        assert len(points) == 7
+        by_day = {p.start: p.expense.to_minor_units() for p in points}
+        assert by_day[date(2026, 3, 10)] == 100_00
+        assert by_day[TODAY] == 20000_00
+
+    def test_months_default_to_half_a_year(self):
+        points = self._trend(World()).execute(USER, Granularity.MONTH)
+        assert [p.start for p in points] == [
+            date(2025, 10, 1),
+            date(2025, 11, 1),
+            date(2025, 12, 1),
+            date(2026, 1, 1),
+            date(2026, 2, 1),
+            date(2026, 3, 1),
+        ]
+
+    def test_years_default_to_three(self):
+        w = World()
+        w.tx(w.acct.id, "income", 1_00, w.salary.id, on=date(2024, 6, 1))
+        points = self._trend(w).execute(USER, Granularity.YEAR)
+        assert [p.start for p in points] == [date(2024, 1, 1), date(2025, 1, 1), date(2026, 1, 1)]
+        assert points[0].income.to_minor_units() == 1_00
+        assert points[2].income.to_minor_units() == 50000_00
+
+    def test_explicit_range(self):
+        points = self._trend(World()).execute(
+            USER, Granularity.DAY, date(2026, 3, 1), date(2026, 3, 3)
+        )
+        assert [p.start for p in points] == [date(2026, 3, 1), date(2026, 3, 2), date(2026, 3, 3)]
+
+    def test_too_many_points_rejected(self):
+        with pytest.raises(ValidationError):
+            self._trend(World()).execute(USER, Granularity.DAY, date(2020, 1, 1), TODAY)
+
+    def test_reversed_range_rejected(self):
+        with pytest.raises(ValidationError):
+            self._trend(World()).execute(USER, Granularity.DAY, TODAY, date(2026, 3, 1))

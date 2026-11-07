@@ -1,14 +1,18 @@
 from datetime import date
 from uuid import uuid4
 
+import pytest
+
 from finances.application.dto import CreateAccountInput
 from finances.application.use_cases import CreateAccount
-from recurring.application.dto import CreateRecurringInput
-from recurring.application.use_cases import CreateRecurring, RunDueRecurring
+from recurring.application.dto import CreateRecurringInput, UpdateRecurringInput
+from recurring.application.use_cases import CreateRecurring, RunDueRecurring, UpdateRecurring
+from shared.exceptions import ValidationError
 from tests.fakes import (
     FakeClock,
     FakeUnitOfWork,
     InMemoryAccountRepository,
+    InMemoryBalanceReader,
     InMemoryCategoryRepository,
     InMemoryRecurringTransactionRepository,
     InMemoryTransactionRepository,
@@ -27,7 +31,9 @@ def _account():
 
 
 def _recurring(recurring_repo, accounts, acct_id, next_run=TODAY, frequency="monthly"):
-    return CreateRecurring(recurring_repo, accounts, InMemoryCategoryRepository()).execute(
+    return CreateRecurring(
+        recurring_repo, accounts, InMemoryCategoryRepository(), FakeClock(TODAY)
+    ).execute(
         USER,
         CreateRecurringInput(
             name="Аренда",
@@ -82,7 +88,9 @@ class TestRunDueRecurring:
         # Toggle off.
         from recurring.application.use_cases import ToggleRecurring
 
-        ToggleRecurring(recurring).execute(USER, dto.id, False)
+        ToggleRecurring(recurring, accounts, InMemoryCategoryRepository()).execute(
+            USER, dto.id, False
+        )
         result = RunDueRecurring(
             recurring, InMemoryTransactionRepository(), FakeUnitOfWork(), FakeClock(TODAY)
         ).execute()
@@ -116,7 +124,7 @@ class TestRunDueRecurring:
         accounts, acct_id = _account()
         recurring = InMemoryRecurringTransactionRepository(accounts)
         _recurring(recurring, accounts, acct_id)
-        ArchiveAccount(accounts).execute(USER, acct_id)
+        ArchiveAccount(accounts, InMemoryBalanceReader()).execute(USER, acct_id)
 
         assert _run(recurring, InMemoryTransactionRepository()).generated == 0
 
@@ -154,3 +162,48 @@ class TestMonthEndSchedule:
         assert dates == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)]
         (template,) = recurring.list_for_user(USER)
         assert template.next_run == date(2026, 4, 30)
+
+
+class TestAnchorDate:
+    def _create(self, recurring, accounts, acct_id, **fields):
+        data = {
+            "name": "Аренда",
+            "amount_minor": 40000_00,
+            "type": "expense",
+            "account_id": acct_id,
+            "frequency": "monthly",
+        } | fields
+        return CreateRecurring(
+            recurring, accounts, InMemoryCategoryRepository(), FakeClock(TODAY)
+        ).execute(USER, CreateRecurringInput.model_validate(data))
+
+    def test_anchor_in_the_past_schedules_the_next_occurrence(self):
+        accounts, acct_id = _account()
+        dto = self._create(
+            InMemoryRecurringTransactionRepository(), accounts, acct_id, anchor_date="2026-01-31"
+        )
+        assert dto.anchor_date == date(2026, 1, 31)
+        assert dto.next_run == date(2026, 3, 31)
+        assert dto.account.name == "Счёт"
+
+    def test_anchor_or_next_run_required(self):
+        accounts, acct_id = _account()
+        with pytest.raises(ValidationError) as exc:
+            self._create(InMemoryRecurringTransactionRepository(), accounts, acct_id)
+        assert exc.value.errors == {"anchor_date": "required"}
+
+    def test_next_run_alone_is_its_own_anchor(self):
+        accounts, acct_id = _account()
+        dto = self._create(
+            InMemoryRecurringTransactionRepository(), accounts, acct_id, next_run="2026-04-05"
+        )
+        assert (dto.anchor_date, dto.next_run) == (date(2026, 4, 5), date(2026, 4, 5))
+
+    def test_updating_the_anchor_reschedules(self):
+        accounts, acct_id = _account()
+        recurring = InMemoryRecurringTransactionRepository()
+        dto = self._create(recurring, accounts, acct_id, next_run="2026-04-05")
+        updated = UpdateRecurring(
+            recurring, accounts, InMemoryCategoryRepository(), FakeClock(TODAY)
+        ).execute(USER, dto.id, UpdateRecurringInput(anchor_date=date(2025, 12, 20)))
+        assert (updated.anchor_date, updated.next_run) == (date(2025, 12, 20), date(2026, 3, 20))

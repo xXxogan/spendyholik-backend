@@ -5,9 +5,11 @@ from uuid import UUID
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
+from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
-from core.interfaces.renderers import debt_to_view, money_to_view
+from core.interfaces.renderers import debt_event_to_view, debt_to_view, money_to_view
+from core.interfaces.schemas import api_doc, many
 from debts.application.dto import CreateDebtInput, RepayDebtInput, UpdateDebtInput
 
 
@@ -18,9 +20,11 @@ def _uuid(value):
 class DebtListCreateView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(many(sc.DebtOut), operation_id="api_v1_debts_list")
     def get(self, request: Request):
         return ok([debt_to_view(d) for d in container.list_debts().execute(request.user.id)])
 
+    @api_doc(sc.DebtOut, request=CreateDebtInput, status=201, errors=sc.WRITE)
     def post(self, request: Request):
         data = self.parse(CreateDebtInput, request.data)
         return created(debt_to_view(container.create_debt().execute(request.user.id, data)))
@@ -29,13 +33,16 @@ class DebtListCreateView(BaseAPIView):
 class DebtDetailView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.DebtOut, errors=sc.READ)
     def get(self, request: Request, pk):
         return ok(debt_to_view(container.get_debt_detail().execute(request.user.id, _uuid(pk))))
 
+    @api_doc(sc.DebtOut, request=UpdateDebtInput, errors=sc.WRITE)
     def patch(self, request: Request, pk):
         data = self.parse(UpdateDebtInput, request.data)
         return ok(debt_to_view(container.update_debt().execute(request.user.id, _uuid(pk), data)))
 
+    @api_doc(None, status=204, errors=sc.READ)
     def delete(self, request: Request, pk):
         container.delete_debt().execute(request.user.id, _uuid(pk))
         return no_content()
@@ -44,6 +51,7 @@ class DebtDetailView(BaseAPIView):
 class DebtRepayView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.DebtPaymentOut, request=RepayDebtInput, status=201, errors=sc.WRITE)
     def post(self, request: Request, pk):
         data = self.parse(RepayDebtInput, request.data)
         payment = container.repay_debt().execute(request.user.id, _uuid(pk), data)
@@ -51,8 +59,19 @@ class DebtRepayView(BaseAPIView):
             {
                 "id": str(payment.id),
                 "debt_id": str(payment.debt_id),
-                "account_id": str(payment.account_id),
+                "account_id": str(payment.account_id) if payment.account_id else None,
                 "amount": money_to_view(payment.amount),
                 "date": payment.date.isoformat(),
             }
         )
+
+
+class DebtHistoryView(BaseAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @api_doc(
+        many(sc.DebtEventOut), errors=sc.READ, description="Opening and repayments, newest first."
+    )
+    def get(self, request: Request, pk):
+        events = container.get_debt_history().execute(request.user.id, _uuid(pk))
+        return ok([debt_event_to_view(e) for e in events])

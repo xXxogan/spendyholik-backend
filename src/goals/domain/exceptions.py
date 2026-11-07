@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from shared.exceptions import EntityNotFoundError
+from shared.exceptions import BusinessRuleError, EntityNotFoundError
+
+
+class GoalTargetExceededError(BusinessRuleError):
+    code = "exceeds_target"
+    default_detail = "The contribution exceeds what is left to the goal's target."
+    field = "amount_minor"
 
 
 class GoalNotFoundError(EntityNotFoundError):

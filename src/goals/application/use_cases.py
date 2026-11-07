@@ -6,8 +6,10 @@ from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from finances.application.ports import AccountRepository
-from finances.domain.exceptions import AccountNotFoundError
+from finances.application.ports import AccountRepository, BalanceReader
+from finances.application.use_cases import account_refs, require_funds
+from finances.domain.entities import Account
+from finances.domain.exceptions import AccountArchivedError, AccountNotFoundError
 from goals.application.dto import (
     ContributeToGoalInput,
     CreateGoalInput,
@@ -18,7 +20,7 @@ from goals.application.dto import (
 )
 from goals.application.ports import GoalContributionRepository, GoalRepository
 from goals.domain.entities import Goal, GoalContribution
-from goals.domain.exceptions import GoalNotFoundError
+from goals.domain.exceptions import GoalNotFoundError, GoalTargetExceededError
 from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.clock import Clock
@@ -51,29 +53,89 @@ def _goal_dto(goal: Goal, current: Money) -> GoalDTO:
     )
 
 
+def _contribution_dto(c: GoalContribution, refs: dict | None = None) -> GoalContributionDTO:
+    return GoalContributionDTO(
+        id=c.id,
+        goal_id=c.goal_id,
+        account_id=c.account_id,
+        amount=c.amount,
+        date=c.date,
+        account=(refs or {}).get(c.account_id),
+    )
+
+
+def _funding_account(
+    accounts: AccountRepository, user_id: UUID, account_id: UUID, currency: str
+) -> Account:
+    account = accounts.get_by_id(account_id, user_id)
+    if account is None:
+        raise AccountNotFoundError(account_id)
+    if account.is_archived:
+        raise AccountArchivedError
+    if account.currency.value != currency:
+        msg = f"Account currency must match goal currency {currency}."
+        raise ValidationError(msg, field="account_id", field_code="currency_mismatch")
+    return account
+
+
 class CreateGoal:
-    def __init__(self, goals: GoalRepository, accounts: AccountRepository) -> None:
+    """Create a goal; a non-zero initial amount is its first contribution.
+
+    That contribution leaves the given account like any other, so it needs
+    ``account_id`` and enough money there.
+    """
+
+    def __init__(
+        self,
+        goals: GoalRepository,
+        contributions: GoalContributionRepository,
+        accounts: AccountRepository,
+        balances: BalanceReader,
+        uow: UnitOfWork,
+        clock: Clock,
+    ) -> None:
         self._goals = goals
+        self._contributions = contributions
         self._accounts = accounts
+        self._balances = balances
+        self._uow = uow
+        self._clock = clock
 
     def execute(self, user_id: UUID, data: CreateGoalInput) -> GoalDTO:
-        account = self._accounts.get_by_id(data.account_id, user_id)
-        if account is None:
-            raise AccountNotFoundError(data.account_id)
-        if account.currency.value != data.currency:
-            msg = f"Goal currency must match account currency {account.currency.value}."
-            raise ValidationError(msg)
+        target = Money.from_minor_units(data.target_amount_minor, data.currency)
+        initial = Money.from_minor_units(data.initial_amount_minor, data.currency)
+        if initial > target:
+            raise GoalTargetExceededError(field="initial_amount_minor")
+        account = None
+        if data.account_id is not None:
+            account = _funding_account(self._accounts, user_id, data.account_id, data.currency)
+        elif initial.is_positive():
+            msg = "An initial amount needs the account it is taken from."
+            raise ValidationError(msg, field="account_id", field_code="required")
+        if account is not None and initial.is_positive():
+            require_funds(self._balances, account, initial, "initial_amount_minor")
         goal = Goal(
             user_id=user_id,
             name=data.name,
-            target_amount=Money.from_minor_units(data.target_amount_minor, data.currency),
-            initial_amount=Money.from_minor_units(data.initial_amount_minor, data.currency),
+            target_amount=target,
+            initial_amount=Money.zero(data.currency),
             account_id=data.account_id,
             deadline=data.deadline,
             icon=data.icon,
             color=data.color,
         )
-        return _goal_dto(self._goals.add(goal), goal.initial_amount)
+        with self._uow:
+            self._goals.add(goal)
+            if account is not None and initial.is_positive():
+                self._contributions.add(
+                    GoalContribution(
+                        goal_id=goal.id,
+                        account_id=account.id,
+                        amount=initial,
+                        date=self._clock.now().date(),
+                    )
+                )
+        return _goal_dto(goal, initial)
 
 
 class UpdateGoal:
@@ -130,11 +192,13 @@ class ContributeToGoal:
         goals: GoalRepository,
         contributions: GoalContributionRepository,
         accounts: AccountRepository,
+        balances: BalanceReader,
         uow: UnitOfWork,
     ) -> None:
         self._goals = goals
         self._contributions = contributions
         self._accounts = accounts
+        self._balances = balances
         self._uow = uow
 
     def execute(
@@ -143,28 +207,42 @@ class ContributeToGoal:
         goal = self._goals.get_by_id(goal_id, user_id)
         if goal is None:
             raise GoalNotFoundError(goal_id)
-        account = self._accounts.get_by_id(data.account_id, user_id)
-        if account is None:
-            raise AccountNotFoundError(data.account_id)
-        if account.currency.value != goal.target_amount.currency:
-            msg = f"Account currency must match goal currency {goal.target_amount.currency}."
-            raise ValidationError(msg)
+        currency = goal.target_amount.currency
+        account = _funding_account(self._accounts, user_id, data.account_id, currency)
+        amount = Money.from_minor_units(data.amount_minor, currency)
+        current = _current_amount(goal, self._contributions.sum_for_goal(goal_id))
+        if amount > goal.target_amount - current:
+            raise GoalTargetExceededError
+        require_funds(self._balances, account, amount, "amount_minor")
         with self._uow:
             contribution = self._contributions.add(
                 GoalContribution(
-                    goal_id=goal_id,
-                    account_id=data.account_id,
-                    amount=Money.from_minor_units(data.amount_minor, goal.target_amount.currency),
-                    date=data.date,
+                    goal_id=goal_id, account_id=account.id, amount=amount, date=data.date
                 )
             )
-        return GoalContributionDTO(
-            id=contribution.id,
-            goal_id=contribution.goal_id,
-            account_id=contribution.account_id,
-            amount=contribution.amount,
-            date=contribution.date,
-        )
+        return _contribution_dto(contribution, account_refs(self._accounts, user_id))
+
+
+class ListGoalContributions:
+    """A goal's contributions, newest first, with the account each came from."""
+
+    def __init__(
+        self,
+        goals: GoalRepository,
+        contributions: GoalContributionRepository,
+        accounts: AccountRepository,
+    ) -> None:
+        self._goals = goals
+        self._contributions = contributions
+        self._accounts = accounts
+
+    def execute(self, user_id: UUID, goal_id: UUID) -> list[GoalContributionDTO]:
+        if self._goals.get_by_id(goal_id, user_id) is None:
+            raise GoalNotFoundError(goal_id)
+        items = self._contributions.list_for_goal(goal_id)
+        refs = account_refs(self._accounts, user_id)
+        items.sort(key=lambda c: c.date, reverse=True)
+        return [_contribution_dto(c, refs) for c in items]
 
 
 class ForecastGoal:

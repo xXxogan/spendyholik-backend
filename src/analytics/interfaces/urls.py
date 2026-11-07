@@ -7,6 +7,7 @@ from analytics.interfaces.views import (
     MonthlyTrendView,
     SpendingByCategoryView,
     SummaryView,
+    TrendView,
 )
 
 app_name = "analytics"
@@ -16,4 +17,5 @@ urlpatterns = [
     path("analytics/summary/", SummaryView.as_view(), name="summary"),
     path("analytics/by-category/", SpendingByCategoryView.as_view(), name="by-category"),
     path("analytics/monthly/", MonthlyTrendView.as_view(), name="monthly"),
+    path("analytics/trend/", TrendView.as_view(), name="trend"),
 ]

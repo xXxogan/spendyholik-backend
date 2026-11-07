@@ -14,7 +14,7 @@ from finances.application.ports import (
     CategoryRepository,
     TransactionRepository,
 )
-from finances.application.use_cases import require_category
+from finances.application.use_cases import account_refs, category_ref, require_category
 from finances.domain.entities import Transaction
 from finances.domain.enums import TransactionType
 from finances.domain.exceptions import AccountNotFoundError
@@ -37,7 +37,7 @@ from shared.exceptions import DomainError, ValidationError
 logger = logging.getLogger(__name__)
 
 
-def _dto(r: RecurringTransaction) -> RecurringDTO:
+def _dto(r: RecurringTransaction, accounts=None, categories=None) -> RecurringDTO:
     return RecurringDTO(
         id=r.id,
         name=r.name,
@@ -48,7 +48,26 @@ def _dto(r: RecurringTransaction) -> RecurringDTO:
         frequency=r.frequency,
         next_run=r.next_run,
         is_active=r.is_active,
+        anchor_date=r.anchor,
+        account=(accounts or {}).get(r.account_id),
+        category=(categories or {}).get(r.category_id),
     )
+
+
+class _Renderer:
+    """Attaches account and category references (two queries per call)."""
+
+    def __init__(self, accounts: AccountRepository, categories: CategoryRepository) -> None:
+        self._accounts = accounts
+        self._categories = categories
+
+    def render(self, user_id: UUID, items: list[RecurringTransaction]) -> list[RecurringDTO]:
+        accounts = account_refs(self._accounts, user_id)
+        categories = {c.id: category_ref(c) for c in self._categories.list_for_user(user_id)}
+        return [_dto(r, accounts, categories) for r in items]
+
+    def render_one(self, user_id: UUID, item: RecurringTransaction) -> RecurringDTO:
+        return self.render(user_id, [item])[0]
 
 
 _STEP = {
@@ -90,6 +109,11 @@ def _occurrences(
     return result, _shift(anchor, frequency, step)
 
 
+def next_on_or_after(anchor: date, frequency: RecurringFrequency, day: date) -> date:
+    """First occurrence of the schedule anchored at ``anchor`` that is not before ``day``."""
+    return _shift(anchor, frequency, _first_step(anchor, frequency, day))
+
+
 def _validate_template(
     categories: CategoryRepository,
     user_id: UUID,
@@ -108,16 +132,25 @@ class CreateRecurring:
         recurring: RecurringTransactionRepository,
         accounts: AccountRepository,
         categories: CategoryRepository,
+        clock: Clock,
     ) -> None:
         self._recurring = recurring
         self._accounts = accounts
         self._categories = categories
+        self._clock = clock
+        self._renderer = _Renderer(accounts, categories)
 
     def execute(self, user_id: UUID, data: CreateRecurringInput) -> RecurringDTO:
         account = self._accounts.get_by_id(data.account_id, user_id)
         if account is None:
             raise AccountNotFoundError(data.account_id)
         _validate_template(self._categories, user_id, data.type, data.category_id)
+        next_run = data.next_run
+        if next_run is None:
+            if data.anchor_date is None:
+                msg = "anchor_date or next_run is required."
+                raise ValidationError(msg, field="anchor_date", field_code="required")
+            next_run = next_on_or_after(data.anchor_date, data.frequency, self._clock.now().date())
         entity = RecurringTransaction(
             user_id=user_id,
             name=data.name,
@@ -126,10 +159,11 @@ class CreateRecurring:
             account_id=data.account_id,
             category_id=data.category_id,
             frequency=data.frequency,
-            next_run=data.next_run,
+            next_run=next_run,
+            anchor=data.anchor_date or next_run,
             is_active=data.is_active,
         )
-        return _dto(self._recurring.add(entity))
+        return self._renderer.render_one(user_id, self._recurring.add(entity))
 
 
 class UpdateRecurring:
@@ -138,10 +172,13 @@ class UpdateRecurring:
         recurring: RecurringTransactionRepository,
         accounts: AccountRepository,
         categories: CategoryRepository,
+        clock: Clock,
     ) -> None:
         self._recurring = recurring
         self._accounts = accounts
         self._categories = categories
+        self._clock = clock
+        self._renderer = _Renderer(accounts, categories)
 
     def execute(
         self, user_id: UUID, recurring_id: UUID, data: UpdateRecurringInput
@@ -152,7 +189,10 @@ class UpdateRecurring:
         updated = apply_patch(
             r,
             data,
-            fields={"amount_minor": ("amount", lambda _: r.amount)},
+            fields={
+                "amount_minor": ("amount", lambda _: r.amount),
+                "anchor_date": ("anchor", lambda d: d),
+            },
             nullable={"category_id"},
         )
         account = self._accounts.get_by_id(updated.account_id, user_id)
@@ -163,22 +203,35 @@ class UpdateRecurring:
         # Keep the amount in the (possibly new) account's currency.
         minor = r.amount.to_minor_units() if data.amount_minor is None else data.amount_minor
         changes: dict = {"amount": Money.from_minor_units(minor, account.currency.value)}
-        if {"next_run", "frequency"} & data.model_fields_set:
+        sent = data.model_fields_set
+        if "anchor_date" in sent:
+            if "next_run" not in sent:
+                changes["next_run"] = next_on_or_after(
+                    updated.anchor, updated.frequency, self._clock.now().date()
+                )
+        elif {"next_run", "frequency"} & sent:
             # A rescheduled template starts counting from its new first run.
             changes["anchor"] = updated.next_run
         updated = replace(updated, **changes)
-        return _dto(self._recurring.update(updated))
+        return self._renderer.render_one(user_id, self._recurring.update(updated))
 
 
 class ToggleRecurring:
-    def __init__(self, recurring: RecurringTransactionRepository) -> None:
+    def __init__(
+        self,
+        recurring: RecurringTransactionRepository,
+        accounts: AccountRepository,
+        categories: CategoryRepository,
+    ) -> None:
         self._recurring = recurring
+        self._renderer = _Renderer(accounts, categories)
 
     def execute(self, user_id: UUID, recurring_id: UUID, is_active: bool) -> RecurringDTO:
         r = self._recurring.get_by_id(recurring_id, user_id)
         if r is None:
             raise RecurringTransactionNotFoundError(recurring_id)
-        return _dto(self._recurring.update(replace(r, is_active=is_active)))
+        saved = self._recurring.update(replace(r, is_active=is_active))
+        return self._renderer.render_one(user_id, saved)
 
 
 class DeleteRecurring:
@@ -191,11 +244,17 @@ class DeleteRecurring:
 
 
 class ListRecurring:
-    def __init__(self, recurring: RecurringTransactionRepository) -> None:
+    def __init__(
+        self,
+        recurring: RecurringTransactionRepository,
+        accounts: AccountRepository,
+        categories: CategoryRepository,
+    ) -> None:
         self._recurring = recurring
+        self._renderer = _Renderer(accounts, categories)
 
     def execute(self, user_id: UUID) -> list[RecurringDTO]:
-        return [_dto(r) for r in self._recurring.list_for_user(user_id)]
+        return self._renderer.render(user_id, self._recurring.list_for_user(user_id))
 
 
 class RunDueRecurring:

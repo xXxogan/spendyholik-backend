@@ -15,7 +15,8 @@ class Goal:
     user_id: UUID
     name: str
     target_amount: Money
-    account_id: UUID
+    #: Account the goal was opened with; contributions name their own account.
+    account_id: UUID | None = None
     initial_amount: Money = field(default_factory=lambda: Money.zero("RUB"))
     deadline: date | None = None
     icon: str = "flag"
@@ -40,7 +41,7 @@ class Goal:
 @dataclass(frozen=True, slots=True)
 class GoalContribution:
     goal_id: UUID
-    account_id: UUID
+    account_id: UUID | None  # None once the account is deleted
     amount: Money
     date: date
     id: UUID = field(default_factory=uuid4)

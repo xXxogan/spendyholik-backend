@@ -8,8 +8,8 @@ from decimal import Decimal
 from uuid import UUID
 
 from django.db import IntegrityError, models
-from django.db.models import Sum
-from django.db.models.functions import TruncMonth
+from django.db.models import Count, Sum
+from django.db.models.functions import TruncDay, TruncMonth, TruncYear
 
 from finances.application.dto import TransactionLabels
 from finances.application.ports import (
@@ -20,7 +20,7 @@ from finances.application.ports import (
     TransactionRepository,
 )
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
-from finances.domain.enums import TransactionType
+from finances.domain.enums import Granularity, TransactionType
 from finances.infrastructure.mappers import (
     account_to_domain,
     account_to_orm,
@@ -67,14 +67,42 @@ def _decode_cursor(cursor: str) -> tuple[date, datetime, UUID]:
         raise ValidationError(msg) from exc
 
 
+_TRUNC = {Granularity.DAY: TruncDay, Granularity.MONTH: TruncMonth, Granularity.YEAR: TruncYear}
+
+#: Relations a rendered transaction needs, loaded in the same query.
+_LABEL_RELATIONS = ("account", "category", "transfer_to_account")
+
+
 def _labels(tx: TransactionORM) -> TransactionLabels:
     category = tx.category
+    destination = tx.transfer_to_account
     return TransactionLabels(
         account_name=tx.account.name,
+        account_color=tx.account.color,
         category_name=category.name if category else None,
         category_icon=category.icon if category else None,
         category_color=category.color if category else None,
+        transfer_to_name=destination.name if destination else None,
+        transfer_to_color=destination.color if destination else None,
     )
+
+
+def _as_date(value) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+
+def category_with_descendants(user_id: UUID, category_id: UUID) -> set[UUID]:
+    """``category_id`` and all of its subcategories (one query per tree level)."""
+    result = {category_id}
+    level = {category_id}
+    while level:
+        level = set(
+            CategoryORM.objects.filter(user_id=user_id, parent_id__in=level)
+            .exclude(pk__in=result)
+            .values_list("id", flat=True)
+        )
+        result |= level
+    return result
 
 
 def _group_by_currency(rows, key) -> dict:
@@ -122,6 +150,7 @@ class DjangoAccountRepository(AccountRepository):
             type=account.type.value,
             color=account.color.value,
             last4=account.last4,
+            initial_balance=account.initial_balance.amount,
             credit_limit=account.credit_limit.amount if account.credit_limit is not None else None,
             interest_rate=account.interest_rate,
             is_archived=account.is_archived,
@@ -174,6 +203,15 @@ class DjangoCategoryRepository(CategoryRepository):
     def has_budgets(self, category_id: UUID, user_id: UUID) -> bool:
         return BudgetORM.objects.filter(category_id=category_id, user_id=user_id).exists()
 
+    def transaction_counts(self, user_id: UUID) -> dict[UUID, int]:
+        rows = (
+            TransactionORM.objects.filter(user_id=user_id, category__isnull=False)
+            .order_by()
+            .values("category_id")
+            .annotate(n=Count("id"))
+        )
+        return {r["category_id"]: r["n"] for r in rows}
+
 
 class DjangoTransactionRepository(TransactionRepository):
     def add(self, transaction: Transaction) -> Transaction:
@@ -195,7 +233,7 @@ class DjangoTransactionRepository(TransactionRepository):
     def get_labeled(self, transaction_id, user_id):
         orm = (
             TransactionORM.objects.filter(pk=transaction_id, user_id=user_id)
-            .select_related("account", "category")
+            .select_related(*_LABEL_RELATIONS)
             .first()
         )
         return (transaction_to_domain(orm), _labels(orm)) if orm else None
@@ -224,11 +262,11 @@ class DjangoTransactionRepository(TransactionRepository):
         cursor=None,
         limit=20,
     ):
-        qs = TransactionORM.objects.filter(user_id=user_id).select_related("account", "category")
+        qs = TransactionORM.objects.filter(user_id=user_id).select_related(*_LABEL_RELATIONS)
         if account_id is not None:
             qs = qs.filter(account_id=account_id)
         if category_id is not None:
-            qs = qs.filter(category_id=category_id)
+            qs = qs.filter(category_id__in=category_with_descendants(user_id, category_id))
         if type is not None:
             qs = qs.filter(type=type.value)
         if date_from is not None:
@@ -285,13 +323,20 @@ class DjangoTransactionRepository(TransactionRepository):
         return _group_by_currency(rows, lambda r: r["category_id"])
 
     def monthly_totals(self, user_id, *, date_from=None, date_to=None):
+        return self.period_totals(
+            user_id, granularity=Granularity.MONTH, date_from=date_from, date_to=date_to
+        )
+
+    def period_totals(self, user_id, *, granularity, date_from=None, date_to=None):
         rows = (
             self._aggregate_qs(user_id, date_from, date_to)
-            .annotate(month=TruncMonth("date"))
-            .values("month", "type", "account__currency")
+            .annotate(bucket=_TRUNC[granularity]("date"))
+            .values("bucket", "type", "account__currency")
             .annotate(total=Sum("amount"))
         )
-        return _group_by_currency(rows, lambda r: (r["month"], TransactionType(r["type"])))
+        return _group_by_currency(
+            rows, lambda r: (_as_date(r["bucket"]), TransactionType(r["type"]))
+        )
 
 
 class DjangoBudgetRepository(BudgetRepository):
@@ -310,8 +355,10 @@ class DjangoBudgetRepository(BudgetRepository):
         BudgetORM.objects.filter(pk=budget.id, user_id=budget.user_id).update(
             category_id=budget.category_id,
             amount=budget.amount.amount,
+            currency=budget.amount.currency,
             period=budget.period.value,
             start_date=budget.start_date,
+            end_date=budget.end_date,
             is_active=budget.is_active,
         )
         return budget
@@ -319,6 +366,12 @@ class DjangoBudgetRepository(BudgetRepository):
     def delete(self, budget_id: UUID, user_id: UUID) -> bool:
         deleted, _ = BudgetORM.objects.filter(pk=budget_id, user_id=user_id).delete()
         return deleted > 0
+
+    def exists_for_category(self, user_id, category_id, *, exclude_id=None) -> bool:
+        qs = BudgetORM.objects.filter(user_id=user_id, category_id=category_id)
+        if exclude_id is not None:
+            qs = qs.exclude(pk=exclude_id)
+        return qs.exists()
 
 
 class DjangoExchangeRateRepository(ExchangeRateRepository):

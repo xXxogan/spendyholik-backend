@@ -9,7 +9,14 @@ import pytest
 class TestGoals:
     def test_create_and_contribute(self, auth_client):
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Счёт", "type": "debit", "currency": "RUB"}, format="json"
+            "/api/v1/accounts/",
+            {
+                "name": "Счёт",
+                "type": "debit",
+                "currency": "RUB",
+                "initial_balance_minor": 30000_00,
+            },
+            format="json",
         ).json()
         goal = auth_client.post(
             "/api/v1/goals/",
@@ -38,7 +45,9 @@ class TestGoals:
 class TestDebts:
     def test_create_and_repay(self, auth_client):
         acct = auth_client.post(
-            "/api/v1/accounts/", {"name": "Счёт", "type": "debit", "currency": "RUB"}, format="json"
+            "/api/v1/accounts/",
+            {"name": "Счёт", "type": "debit", "currency": "RUB", "initial_balance_minor": 1000_00},
+            format="json",
         ).json()
         debt = auth_client.post(
             "/api/v1/debts/",

@@ -7,6 +7,7 @@ from accounts.interfaces.views import (
     ConfirmPasswordResetView,
     LoginView,
     LogoutView,
+    ProfileDataView,
     ProfileView,
     RefreshTokenView,
     RegisterView,
@@ -26,4 +27,5 @@ urlpatterns = [
     path("auth/social/<str:provider>/", SocialLoginView.as_view(), name="social"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/password/", ChangePasswordView.as_view(), name="change-password"),
+    path("profile/data/", ProfileDataView.as_view(), name="profile-data"),
 ]

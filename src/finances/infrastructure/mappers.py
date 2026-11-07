@@ -125,9 +125,10 @@ def budget_to_domain(orm: BudgetORM) -> Budget:
         id=orm.id,
         user_id=orm.user_id,
         category_id=orm.category_id,
-        amount=Money(Decimal(orm.amount), "RUB"),
+        amount=Money(Decimal(orm.amount), orm.currency),
         period=BudgetPeriod(orm.period),
         start_date=orm.start_date,
+        end_date=orm.end_date,
         is_active=orm.is_active,
     )
 
@@ -138,8 +139,10 @@ def budget_to_orm(budget: Budget) -> BudgetORM:
         user_id=budget.user_id,
         category_id=budget.category_id,
         amount=budget.amount.amount,
+        currency=budget.amount.currency,
         period=budget.period.value,
         start_date=budget.start_date,
+        end_date=budget.end_date,
         is_active=budget.is_active,
     )
 

@@ -26,6 +26,7 @@ from accounts.application.ports import (
     ProfileRepository,
     SocialIdentityProvider,
     TokenPair,
+    UserDataEraser,
     UserRepository,
 )
 from accounts.domain.entities import Profile, User
@@ -35,6 +36,7 @@ from accounts.domain.exceptions import (
     PasswordResetTokenInvalidError,
     ProfileNotFoundError,
     UserNotFoundError,
+    WrongPasswordError,
 )
 from accounts.domain.value_objects import Email
 from shared.application.patch import apply_patch
@@ -46,9 +48,11 @@ def _user_dto(user: User) -> UserDTO:
     return UserDTO(id=user.id, email=user.email.value, first_name=user.first_name)
 
 
-def _profile_dto(profile: Profile) -> ProfileDTO:
+def _profile_dto(profile: Profile, user: User) -> ProfileDTO:
     return ProfileDTO(
         user_id=profile.user_id,
+        first_name=user.first_name,
+        email=user.email.value,
         base_currency=profile.base_currency.value,
         theme=profile.theme,
         onboarded=profile.onboarded,
@@ -161,28 +165,53 @@ class SocialLogin:
 
 
 class GetProfile:
-    def __init__(self, profile_repo: ProfileRepository) -> None:
+    def __init__(self, profile_repo: ProfileRepository, user_repo: UserRepository) -> None:
         self._profiles = profile_repo
+        self._users = user_repo
 
     def execute(self, user_id: UUID) -> ProfileDTO:
         profile = self._profiles.get_by_user(user_id)
-        if profile is None:
+        user = self._users.get_by_id(user_id)
+        if profile is None or user is None:
             raise ProfileNotFoundError(user_id)
-        return _profile_dto(profile)
+        return _profile_dto(profile, user)
+
+
+#: Fields of :class:`UpdateProfileInput` stored on the user rather than the profile.
+_USER_FIELDS = ("first_name", "email")
 
 
 class UpdateProfile:
-    def __init__(self, profile_repo: ProfileRepository) -> None:
+    """Update the profile and the user's name and email in one transaction."""
+
+    def __init__(
+        self, profile_repo: ProfileRepository, user_repo: UserRepository, uow: UnitOfWork
+    ) -> None:
         self._profiles = profile_repo
+        self._users = user_repo
+        self._uow = uow
 
     def execute(self, user_id: UUID, data: UpdateProfileInput) -> ProfileDTO:
         profile = self._profiles.get_by_user(user_id)
-        if profile is None:
+        user = self._users.get_by_id(user_id)
+        if profile is None or user is None:
             raise ProfileNotFoundError(user_id)
+        new_user = apply_patch(user, data, fields={"email": ("email", Email)}, only=_USER_FIELDS)
+        if new_user.email != user.email and self._users.email_exists(new_user.email):
+            raise EmailAlreadyTakenError
+        profile_fields = set(UpdateProfileInput.model_fields) - set(_USER_FIELDS)
         updated = apply_patch(
-            profile, data, fields={"base_currency": ("base_currency", CurrencyCode)}
+            profile,
+            data,
+            fields={"base_currency": ("base_currency", CurrencyCode)},
+            only=profile_fields,
         )
-        return _profile_dto(self._profiles.update(updated))
+        with self._uow:
+            if new_user != user:
+                # UserRepository.update raises EmailAlreadyTakenError on a lost race.
+                self._users.update(new_user)
+            saved = self._profiles.update(updated)
+        return _profile_dto(saved, new_user)
 
 
 class ChangePassword:
@@ -202,7 +231,7 @@ class ChangePassword:
             raise UserNotFoundError(user_id)
         current_hash = self._users.get_password_hash(user_id)
         if not self._hasher.verify(data.old_password, current_hash or ""):
-            raise InvalidCredentialsError
+            raise WrongPasswordError
         self._users.set_password(user_id, self._hasher.hash(data.new_password))
         # Sessions opened with the old password must not outlive it.
         self._tokens.revoke_all(user_id)
@@ -244,3 +273,15 @@ class ConfirmPasswordReset:
         self._gateway.invalidate_token(data.token)
         self._users.set_password(user_id, self._hasher.hash(data.new_password))
         self._tokens.revoke_all(user_id)
+
+
+class WipeUserData:
+    """Delete all of the user's financial data; the account and settings stay."""
+
+    def __init__(self, eraser: UserDataEraser, uow: UnitOfWork) -> None:
+        self._eraser = eraser
+        self._uow = uow
+
+    def execute(self, user_id: UUID) -> None:
+        with self._uow:
+            self._eraser.erase(user_id)

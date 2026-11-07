@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from uuid import UUID
 
+from finances.application.dto import CategoryRefDTO
 from shared.domain.money import Money
 
 
@@ -43,6 +44,14 @@ class CategorySpendingDTO:
     category_name: str
     amount: Money
     ratio: float
+    category: CategoryRefDTO | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrendPointDTO:
+    start: date  # first day of the day/month/year bucket
+    income: Money
+    expense: Money
 
 
 @dataclass(frozen=True, slots=True)

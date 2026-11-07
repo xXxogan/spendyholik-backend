@@ -6,3 +6,8 @@ from enum import StrEnum
 class DebtDirection(StrEnum):
     I_OWE = "i_owe"
     OWED_TO_ME = "owed_to_me"
+
+
+class DebtEventKind(StrEnum):
+    OPENED = "opened"
+    REPAYMENT = "repayment"

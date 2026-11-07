@@ -8,6 +8,16 @@ from shared.exceptions import BusinessRuleError, EntityNotFoundError, Validation
 class EmailAlreadyTakenError(BusinessRuleError):
     code = "email_already_taken"
     default_detail = "A user with this email already exists."
+    field = "email"
+
+
+class WrongPasswordError(ValidationError):
+    """The current password given to confirm a change is wrong (422, not 401:
+    the session itself is valid)."""
+
+    code = "wrong_password"
+    default_detail = "The current password is wrong."
+    field = "old_password"
 
 
 class InvalidCredentialsError(ValidationError):

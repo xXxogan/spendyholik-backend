@@ -45,6 +45,13 @@ class ProfileRepository(ABC):
     def update(self, profile: Profile) -> Profile: ...
 
 
+class UserDataEraser(ABC):
+    """Deletes everything a user owns except the user and profile themselves."""
+
+    @abstractmethod
+    def erase(self, user_id: UUID) -> None: ...
+
+
 class PasswordHasher(ABC):
     @abstractmethod
     def hash(self, password: str) -> str: ...

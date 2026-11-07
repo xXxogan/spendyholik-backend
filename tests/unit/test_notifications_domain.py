@@ -6,15 +6,20 @@ from notifications.domain.enums import NotificationType
 
 class TestNotification:
     def test_creates(self):
-        n = Notification(user_id=uuid4(), type=NotificationType.BUDGET_THRESHOLD, title="Бюджет")
+        n = Notification(
+            user_id=uuid4(),
+            type=NotificationType.BUDGET_ALMOST_SPENT,
+            subject="Еда",
+            percent=90,
+        )
         assert n.is_read is False
-        assert n.body == ""
+        assert n.title == ""
+        assert n.amount_minor is None
 
     def test_type_values(self):
         assert {t.value for t in NotificationType} == {
-            "system",
-            "budget_threshold",
+            "budget_almost_spent",
+            "income_received",
+            "recurring_tomorrow",
             "goal_progress",
-            "upcoming_recurring",
-            "weekly_report",
         }

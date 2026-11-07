@@ -151,7 +151,10 @@ MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS", default=[])
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+# Patterns for origins whose port is not fixed, e.g. the Flutter Web dev server
+# (`flutter run -d chrome` picks a random localhost port).
+CORS_ALLOWED_ORIGIN_REGEXES = env.list("CORS_ALLOWED_ORIGIN_REGEXES", default=[])
 CORS_ALLOW_CREDENTIALS = True
 
 # ---------------------------------------------------------------------------
@@ -195,6 +198,8 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "REST API for the «SpendyHolik» personal finance application.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Recurring templates allow a narrower "type" choice set than transactions.
+    "ENUM_NAME_OVERRIDES": {"RecurringTypeEnum": ["expense", "income"]},
 }
 
 # ---------------------------------------------------------------------------

@@ -24,10 +24,17 @@ def _error_response(
     )
 
 
+def _field_code(value) -> str:
+    """Collapse DRF's ``[ErrorDetail(...)]`` into one machine-readable code."""
+    if isinstance(value, list):
+        value = value[0] if value else "invalid"
+    return str(value)
+
+
 def exception_handler(exc: Exception, context: dict) -> Response | None:
     if isinstance(exc, DomainError):
         set_rollback()
-        return _error_response(exc.code, exc.detail, status=exc.http_status)
+        return _error_response(exc.code, exc.detail, exc.errors, status=exc.http_status)
 
     if isinstance(exc, Http404):
         set_rollback()
@@ -39,7 +46,7 @@ def exception_handler(exc: Exception, context: dict) -> Response | None:
         detail = getattr(exc, "detail", "Validation failed.")
         errors = {}
         if isinstance(detail, dict):
-            errors = {k: v for k, v in detail.items() if k != "detail"}
+            errors = {k: _field_code(v) for k, v in detail.items() if k != "detail"}
         return _error_response("validation_error", "Validation failed.", errors, status=422)
 
     response = drf_exception_handler(exc, context)

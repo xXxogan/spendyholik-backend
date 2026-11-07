@@ -113,10 +113,12 @@ class Budget(models.Model):
     )
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="budgets")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3, default="RUB")
     period = models.CharField(
         max_length=20, choices=_choices(BudgetPeriod), default=BudgetPeriod.MONTHLY.value
     )
     start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:

@@ -19,6 +19,8 @@ def debt_to_domain(orm: DebtORM) -> Debt:
         remaining=Money(Decimal(orm.remaining), orm.currency),
         due_date=orm.due_date,
         is_closed=orm.is_closed,
+        note=orm.note,
+        created_at=orm.created_at,
     )
 
 
@@ -33,6 +35,8 @@ def debt_to_orm(d: Debt) -> DebtORM:
         currency=d.amount.currency,
         due_date=d.due_date,
         is_closed=d.is_closed,
+        note=d.note,
+        **({"created_at": d.created_at} if d.created_at else {}),
     )
 
 

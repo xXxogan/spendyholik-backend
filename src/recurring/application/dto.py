@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from finances.application.dto import AccountRefDTO, CategoryRefDTO
 from finances.domain.enums import TransactionType
 from recurring.domain.enums import RecurringFrequency
 from shared.domain.money import Money
@@ -21,7 +22,11 @@ class CreateRecurringInput(BaseModel):
     type: TransactionType
     account_id: UUID
     frequency: RecurringFrequency
-    next_run: date
+    #: First occurrence of the schedule; later ones are ``anchor_date + n * step``.
+    #: Without ``next_run`` the next occurrence on/after today is due next.
+    anchor_date: date | None = None
+    #: Next due date; defaults from ``anchor_date``. One of the two is required.
+    next_run: date | None = None
     category_id: UUID | None = None
     is_active: bool = True
 
@@ -34,6 +39,7 @@ class UpdateRecurringInput(BaseModel):
     account_id: UUID | None = None
     category_id: UUID | None = None
     frequency: RecurringFrequency | None = None
+    anchor_date: date | None = None
     next_run: date | None = None
     is_active: bool | None = None
 
@@ -49,6 +55,9 @@ class RecurringDTO:
     frequency: RecurringFrequency
     next_run: date
     is_active: bool
+    anchor_date: date | None = None
+    account: AccountRefDTO | None = None
+    category: CategoryRefDTO | None = None
 
 
 @dataclass(frozen=True, slots=True)

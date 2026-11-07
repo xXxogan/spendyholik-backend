@@ -12,36 +12,60 @@ from uuid import UUID
 from dateutil.relativedelta import relativedelta
 
 from accounts.application.ports import ProfileRepository
-from analytics.application.currency import CurrencyConverter, base_currency_for
 from analytics.application.dto import (
     BudgetStatusDTO,
     CategorySpendingDTO,
     DashboardDTO,
     MonthlyTrendPointDTO,
     SummaryDTO,
+    TrendPointDTO,
 )
+from finances.application.currency import CurrencyConverter, base_currency_for
 from finances.application.ports import (
     AccountRepository,
+    BalanceReader,
     BudgetRepository,
     CategoryRepository,
     ExchangeRateRepository,
     TransactionRepository,
 )
-from finances.domain.entities import Budget
-from finances.domain.enums import BudgetPeriod, TransactionType
+from finances.application.use_cases import (
+    category_ref,
+    current_balance,
+    descendant_ids,
+    merge_totals,
+)
+from finances.domain.enums import Granularity, TransactionType
 from shared.domain.clock import Clock
+from shared.exceptions import ValidationError
 
 #: Upper bound for the monthly trend window.
 MAX_TREND_MONTHS = 36
+#: Upper bound for the number of points of a trend.
+MAX_TREND_POINTS = 400
+
+_STEP = {
+    Granularity.DAY: relativedelta(days=1),
+    Granularity.MONTH: relativedelta(months=1),
+    Granularity.YEAR: relativedelta(years=1),
+}
 
 
-def _budget_window_start(budget: Budget, today: date) -> date | None:
-    """First day counted against ``budget`` (``None`` = since the beginning)."""
-    if budget.period is BudgetPeriod.WEEKLY:
-        return today - timedelta(days=today.weekday())
-    if budget.period is BudgetPeriod.ONE_TIME:
-        return budget.start_date
-    return today.replace(day=1)
+def _bucket_start(day: date, granularity: Granularity) -> date:
+    if granularity is Granularity.MONTH:
+        return day.replace(day=1)
+    if granularity is Granularity.YEAR:
+        return day.replace(month=1, day=1)
+    return day
+
+
+def _default_trend_start(today: date, granularity: Granularity) -> date:
+    """A week of days, half a year of months or three years."""
+    if granularity is Granularity.DAY:
+        return today - timedelta(days=6)
+    if granularity is Granularity.MONTH:
+        return today.replace(day=1) - relativedelta(months=5)
+    return today.replace(month=1, day=1) - relativedelta(years=2)
 
 
 class _AnalyticsUseCase:
@@ -68,11 +92,15 @@ class GetDashboard(_AnalyticsUseCase):
         profiles: ProfileRepository,
         rates: ExchangeRateRepository,
         clock: Clock,
+        balances: BalanceReader,
+        categories: CategoryRepository,
     ) -> None:
         super().__init__(transactions, profiles, rates)
         self._accounts = accounts
         self._budgets = budgets
         self._clock = clock
+        self._balances = balances
+        self._categories = categories
 
     def execute(self, user_id: UUID) -> DashboardDTO:
         fx = self._converter(user_id)
@@ -84,27 +112,25 @@ class GetDashboard(_AnalyticsUseCase):
         income_month = fx.total(month.get(TransactionType.INCOME))
         expense_month = fx.total(month.get(TransactionType.EXPENSE))
 
-        # Total balance: initial balances + all income − all expenses (transfers net to zero).
-        all_time = self._transactions.totals_by_type(user_id)
-        initial = fx.sum(a.initial_balance for a in self._accounts.list_for_user(user_id))
-        total_balance = (
-            initial
-            + fx.total(all_time.get(TransactionType.INCOME))
-            - fx.total(all_time.get(TransactionType.EXPENSE))
-        )
+        # Total balance: the sum of the current balances of the live accounts.
+        accounts = self._accounts.list_for_user(user_id)
+        deltas = self._balances.deltas(user_id, [a.id for a in accounts])
+        total_balance = fx.sum(current_balance(a, deltas.get(a.id)) for a in accounts)
 
         # One aggregate per distinct budget window instead of one per budget.
         active = [b for b in self._budgets.list_for_user(user_id) if b.is_active]
+        categories = self._categories.list_for_user(user_id) if active else []
         spent_by_window = {
-            start: self._transactions.sum_by_category(
-                user_id, type=TransactionType.EXPENSE, date_from=start, date_to=today
+            window: self._transactions.sum_by_category(
+                user_id, type=TransactionType.EXPENSE, date_from=window[0], date_to=window[1]
             )
-            for start in {_budget_window_start(b, today) for b in active}
+            for window in {b.period_bounds(today) for b in active}
         }
         budget_statuses = []
         for budget in active:
-            window = spent_by_window[_budget_window_start(budget, today)]
-            spent = fx.total(window.get(budget.category_id))
+            window = spent_by_window[budget.period_bounds(today)]
+            ids = descendant_ids(categories, budget.category_id)
+            spent = fx.total(merge_totals(window.get(i) for i in ids))
             limit = fx.total({budget.amount.currency: budget.amount})
             budget_statuses.append(
                 BudgetStatusDTO(
@@ -157,23 +183,90 @@ class GetSpendingByCategory(_AnalyticsUseCase):
     def execute(
         self, user_id: UUID, date_from: date | None = None, date_to: date | None = None
     ) -> list[CategorySpendingDTO]:
+        """Expenses per top-level category; subcategories roll up into their root."""
         fx = self._converter(user_id)
         sums = self._transactions.sum_by_category(
             user_id, type=TransactionType.EXPENSE, date_from=date_from, date_to=date_to
         )
-        amounts = {category_id: fx.total(totals) for category_id, totals in sums.items()}
+        by_id = {c.id: c for c in self._categories.list_for_user(user_id)}
+        by_root: dict[UUID, list] = {}
+        for category_id, totals in sums.items():
+            by_root.setdefault(_root_of(by_id, category_id), []).append(totals)
+        amounts = {root: fx.total(merge_totals(parts)) for root, parts in by_root.items()}
         total = fx.sum(amounts.values())
-        names = {c.id: c.name for c in self._categories.list_for_user(user_id)}
+        result = []
+        for category_id, amount in sorted(
+            amounts.items(), key=lambda kv: kv[1].amount, reverse=True
+        ):
+            category = by_id.get(category_id)
+            result.append(
+                CategorySpendingDTO(
+                    category_id=category_id,
+                    category_name=category.name if category else "—",
+                    amount=amount,
+                    ratio=0.0 if total.is_zero() else float(amount.amount / total.amount),
+                    category=category_ref(category) if category else None,
+                )
+            )
+        return result
+
+
+def _root_of(by_id: dict, category_id: UUID) -> UUID:
+    """Top-level ancestor of a category (itself when it has no parent)."""
+    seen: set[UUID] = set()
+    current = category_id
+    while current in by_id and by_id[current].parent_id is not None and current not in seen:
+        seen.add(current)
+        current = by_id[current].parent_id
+    return current
+
+
+class GetTrend(_AnalyticsUseCase):
+    """Income and expense per day, month or year, every bucket present, ascending."""
+
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        profiles: ProfileRepository,
+        rates: ExchangeRateRepository,
+        clock: Clock,
+    ) -> None:
+        super().__init__(transactions, profiles, rates)
+        self._clock = clock
+
+    def execute(
+        self,
+        user_id: UUID,
+        granularity: Granularity,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[TrendPointDTO]:
+        today = self._clock.now().date()
+        date_to = date_to or today
+        date_from = date_from or _default_trend_start(date_to, granularity)
+        if date_from > date_to:
+            msg = "date_from must not be after date_to."
+            raise ValidationError(msg, field="date_from", field_code="invalid")
+        step = _STEP[granularity]
+        starts: list[date] = []
+        current = _bucket_start(date_from, granularity)
+        while current <= date_to:
+            if len(starts) == MAX_TREND_POINTS:
+                msg = f"A trend has at most {MAX_TREND_POINTS} points."
+                raise ValidationError(msg, field="date_from", field_code="too_large")
+            starts.append(current)
+            current = current + step
+        fx = self._converter(user_id)
+        totals = self._transactions.period_totals(
+            user_id, granularity=granularity, date_from=date_from, date_to=date_to
+        )
         return [
-            CategorySpendingDTO(
-                category_id=category_id,
-                category_name=names.get(category_id, "—"),
-                amount=amount,
-                ratio=0.0 if total.is_zero() else float(amount.amount / total.amount),
+            TrendPointDTO(
+                start=start,
+                income=fx.total(totals.get((start, TransactionType.INCOME))),
+                expense=fx.total(totals.get((start, TransactionType.EXPENSE))),
             )
-            for category_id, amount in sorted(
-                amounts.items(), key=lambda kv: kv[1].amount, reverse=True
-            )
+            for start in starts
         ]
 
 

@@ -13,6 +13,13 @@ class DebtAlreadyClosedError(BusinessRuleError):
 class ExcessiveRepaymentError(ValidationError):
     code = "excessive_repayment"
     default_detail = "The repayment exceeds the remaining debt."
+    field = "amount_minor"
+
+
+class DebtBelowRepaidError(BusinessRuleError):
+    code = "below_repaid"
+    default_detail = "The debt amount cannot be less than what is already repaid."
+    field = "amount_minor"
 
 
 class DebtNotFoundError(EntityNotFoundError):

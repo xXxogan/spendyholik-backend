@@ -14,6 +14,7 @@ from finances.application.dto import (
 )
 from finances.application.use_cases import (
     ArchiveAccount,
+    BudgetReporter,
     CreateAccount,
     CreateBudget,
     CreateCategory,
@@ -33,14 +34,26 @@ from finances.domain.exceptions import (
 from shared.domain.currency_code import CurrencyCode
 from shared.exceptions import ValidationError
 from tests.fakes import (
+    FakeClock,
     InMemoryAccountRepository,
+    InMemoryBalanceReader,
     InMemoryBudgetRepository,
     InMemoryCategoryRepository,
+    InMemoryExchangeRateRepository,
     InMemoryProfileRepository,
     InMemoryTransactionRepository,
 )
 
 USER = uuid4()
+
+
+def _reporter(categories, transactions=None, today=date(2026, 3, 15)):
+    return BudgetReporter(
+        transactions or InMemoryTransactionRepository(),
+        categories,
+        InMemoryExchangeRateRepository(),
+        FakeClock(today),
+    )
 
 
 def _account(repo, name="Карта", type=AccountType.DEBIT, currency="RUB", **kw):
@@ -54,14 +67,17 @@ class TestAccounts:
         repo = InMemoryAccountRepository()
         dto = _account(repo)
         assert dto.initial_balance.to_minor_units() == 0
-        assert len(ListAccounts(repo).execute(USER)) == 1
+        assert len(ListAccounts(repo, InMemoryBalanceReader()).execute(USER)) == 1
 
     def test_archived_account_excluded_from_list(self):
         repo = InMemoryAccountRepository()
         dto = _account(repo)
-        ArchiveAccount(repo).execute(USER, dto.id)
-        assert ListAccounts(repo).execute(USER) == []
-        assert len(ListAccounts(repo).execute(USER, include_archived=True)) == 1
+        ArchiveAccount(repo, InMemoryBalanceReader()).execute(USER, dto.id)
+        assert ListAccounts(repo, InMemoryBalanceReader()).execute(USER) == []
+        assert (
+            len(ListAccounts(repo, InMemoryBalanceReader()).execute(USER, include_archived=True))
+            == 1
+        )
 
 
 class TestCreateTransaction:
@@ -89,7 +105,7 @@ class TestCreateTransaction:
     def test_archived_account_rejected(self):
         accounts = InMemoryAccountRepository()
         acct = _account(accounts)
-        ArchiveAccount(accounts).execute(USER, acct.id)
+        ArchiveAccount(accounts, InMemoryBalanceReader()).execute(USER, acct.id)
         with pytest.raises(AccountArchivedError):
             CreateTransaction(
                 accounts, InMemoryCategoryRepository(), InMemoryTransactionRepository()
@@ -229,9 +245,9 @@ class TestBudgets:
             USER, CreateCategoryInput(name="Зарплата", type=TransactionType.INCOME)
         )
         with pytest.raises(ValidationError):
-            CreateBudget(budgets, categories, InMemoryProfileRepository()).execute(
-                USER, CreateBudgetInput(category_id=income.id, amount_minor=1000_00)
-            )
+            CreateBudget(
+                budgets, categories, InMemoryProfileRepository(), _reporter(categories)
+            ).execute(USER, CreateBudgetInput(category_id=income.id, amount_minor=1000_00))
 
     def test_budget_uses_profile_base_currency(self):
         budgets = InMemoryBudgetRepository()
@@ -241,7 +257,7 @@ class TestBudgets:
         food = CreateCategory(categories).execute(
             USER, CreateCategoryInput(name="Еда", type=TransactionType.EXPENSE)
         )
-        budget = CreateBudget(budgets, categories, profiles).execute(
+        budget = CreateBudget(budgets, categories, profiles, _reporter(categories)).execute(
             USER, CreateBudgetInput(category_id=food.id, amount_minor=1000_00)
         )
         assert budget.amount.currency == "USD"

@@ -33,6 +33,8 @@ class DjangoDebtRepository(DebtRepository):
     def update(self, debt: Debt) -> Debt:
         DebtORM.objects.filter(pk=debt.id, user_id=debt.user_id).update(
             person_name=debt.person_name,
+            amount=debt.amount.amount,
+            note=debt.note,
             due_date=debt.due_date,
             remaining=debt.remaining.amount if debt.remaining is not None else debt.amount.amount,
             is_closed=debt.is_closed,

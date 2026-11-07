@@ -4,8 +4,9 @@ from enum import StrEnum
 
 
 class NotificationType(StrEnum):
-    SYSTEM = "system"
-    BUDGET_THRESHOLD = "budget_threshold"
+    """What happened; the client builds the text from the type and the structured fields."""
+
+    BUDGET_ALMOST_SPENT = "budget_almost_spent"
+    INCOME_RECEIVED = "income_received"
+    RECURRING_TOMORROW = "recurring_tomorrow"
     GOAL_PROGRESS = "goal_progress"
-    UPCOMING_RECURRING = "upcoming_recurring"
-    WEEKLY_REPORT = "weekly_report"

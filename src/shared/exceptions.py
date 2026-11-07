@@ -14,10 +14,28 @@ class DomainError(Exception):
     code = "domain_error"
     http_status = 400
     default_detail = "Domain error."
+    #: Request field the error belongs to; rendered as ``errors = {field: field_code}``.
+    field: str | None = None
+    #: Code reported for ``field``; defaults to :attr:`code`.
+    field_code: str | None = None
 
-    def __init__(self, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        detail: str | None = None,
+        *,
+        field: str | None = None,
+        field_code: str | None = None,
+    ) -> None:
         self.detail = detail or self.default_detail
+        if field is not None:
+            self.field = field
+        if field_code is not None:
+            self.field_code = field_code
         super().__init__(self.detail)
+
+    @property
+    def errors(self) -> dict[str, str]:
+        return {self.field: self.field_code or self.code} if self.field else {}
 
 
 class EntityNotFoundError(DomainError):

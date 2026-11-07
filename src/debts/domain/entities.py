@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from debts.domain.enums import DebtDirection
@@ -20,6 +20,8 @@ class Debt:
     remaining: Money | None = None
     due_date: date | None = None
     is_closed: bool = False
+    note: str = ""
+    created_at: datetime | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
@@ -49,7 +51,7 @@ class Debt:
 @dataclass(frozen=True, slots=True)
 class DebtPayment:
     debt_id: UUID
-    account_id: UUID
+    account_id: UUID | None  # None once the account is deleted
     amount: Money
     date: date
     id: UUID = field(default_factory=uuid4)

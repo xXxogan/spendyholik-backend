@@ -7,9 +7,11 @@ from uuid import UUID
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
+from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
-from core.interfaces.renderers import goal_to_view, money_to_view
+from core.interfaces.renderers import contribution_to_view, goal_to_view, money_to_view
+from core.interfaces.schemas import api_doc, many
 from goals.application.dto import ContributeToGoalInput, CreateGoalInput, UpdateGoalInput
 
 
@@ -20,9 +22,11 @@ def _uuid(value: str | UUID) -> UUID:
 class GoalListCreateView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(many(sc.GoalOut), operation_id="api_v1_goals_list")
     def get(self, request: Request):
         return ok([goal_to_view(g) for g in container.list_goals().execute(request.user.id)])
 
+    @api_doc(sc.GoalOut, request=CreateGoalInput, status=201, errors=sc.WRITE)
     def post(self, request: Request):
         data = self.parse(CreateGoalInput, request.data)
         return created(goal_to_view(container.create_goal().execute(request.user.id, data)))
@@ -31,13 +35,18 @@ class GoalListCreateView(BaseAPIView):
 class GoalDetailView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.GoalOut, errors=sc.READ)
     def get(self, request: Request, pk):
         return ok(goal_to_view(container.get_goal_detail().execute(request.user.id, _uuid(pk))))
 
+    @api_doc(sc.GoalOut, request=UpdateGoalInput, errors=sc.WRITE)
     def patch(self, request: Request, pk):
         data = self.parse(UpdateGoalInput, request.data)
         return ok(goal_to_view(container.update_goal().execute(request.user.id, _uuid(pk), data)))
 
+    @api_doc(
+        None, status=204, errors=sc.READ, description="Contributions go back to their accounts."
+    )
     def delete(self, request: Request, pk):
         container.delete_goal().execute(request.user.id, _uuid(pk))
         return no_content()
@@ -46,23 +55,26 @@ class GoalDetailView(BaseAPIView):
 class GoalContributeView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.ContributionOut, request=ContributeToGoalInput, status=201, errors=sc.WRITE)
     def post(self, request: Request, pk):
         data = self.parse(ContributeToGoalInput, request.data)
         contribution = container.contribute_to_goal().execute(request.user.id, _uuid(pk), data)
-        return created(
-            {
-                "id": str(contribution.id),
-                "goal_id": str(contribution.goal_id),
-                "account_id": str(contribution.account_id),
-                "amount": money_to_view(contribution.amount),
-                "date": contribution.date.isoformat(),
-            }
-        )
+        return created(contribution_to_view(contribution))
+
+
+class GoalContributionListView(BaseAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @api_doc(many(sc.ContributionOut), errors=sc.READ, description="Newest first.")
+    def get(self, request: Request, pk):
+        items = container.list_goal_contributions().execute(request.user.id, _uuid(pk))
+        return ok([contribution_to_view(c) for c in items])
 
 
 class GoalForecastView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.ForecastOut, errors=sc.READ)
     def get(self, request: Request, pk):
         forecast = container.forecast_goal().execute(request.user.id, _uuid(pk))
         return ok(

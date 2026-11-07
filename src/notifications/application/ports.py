@@ -19,7 +19,8 @@ class NotificationRepository(ABC):
     def unread_count(self, user_id: UUID) -> int: ...
 
     @abstractmethod
-    def mark_read(self, user_id: UUID, notification_id: UUID) -> None: ...
+    def mark_read(self, user_id: UUID, notification_id: UUID) -> bool:
+        """Mark one notification read; ``False`` if the user has no such notification."""
 
     @abstractmethod
     def mark_all_read(self, user_id: UUID) -> None: ...

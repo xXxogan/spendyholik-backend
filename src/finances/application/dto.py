@@ -35,6 +35,8 @@ class UpdateAccountInput(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     type: AccountType | None = None
+    #: Desired *current* balance; the initial balance is shifted to match it.
+    balance_minor: int | None = None
     color: str | None = None
     last4: str | None = None
     credit_limit_minor: int | None = None
@@ -104,7 +106,9 @@ class CreateBudgetInput(BaseModel):
     category_id: UUID
     amount_minor: int = Field(gt=0)
     period: BudgetPeriod = BudgetPeriod.MONTHLY
+    #: Required (with ``end_date``) for ``one_time`` budgets.
     start_date: _date | None = None
+    end_date: _date | None = None
     is_active: bool = True
 
 
@@ -115,6 +119,7 @@ class UpdateBudgetInput(BaseModel):
     amount_minor: int | None = Field(default=None, gt=0)
     period: BudgetPeriod | None = None
     start_date: _date | None = None
+    end_date: _date | None = None
     is_active: bool | None = None
 
 
@@ -133,6 +138,13 @@ class AccountDTO:
     credit_limit: Money | None
     interest_rate: Decimal
     is_archived: bool
+    balance: Money
+
+
+@dataclass(frozen=True, slots=True)
+class BalancePointDTO:
+    at: _date
+    balance: Money
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +156,22 @@ class CategoryDTO:
     color: str
     parent_id: UUID | None
     is_system: bool
+    transaction_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRefDTO:
+    id: UUID
+    name: str
+    color: str
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryRefDTO:
+    id: UUID
+    name: str
+    icon: str
+    color: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +182,9 @@ class TransactionLabels:
     category_name: str | None = None
     category_icon: str | None = None
     category_color: str | None = None
+    account_color: str | None = None
+    transfer_to_name: str | None = None
+    transfer_to_color: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,8 +211,14 @@ class TransactionPageDTO:
 @dataclass(frozen=True, slots=True)
 class BudgetDTO:
     id: UUID
-    category_id: UUID
+    category: CategoryRefDTO
     amount: Money
     period: BudgetPeriod
     start_date: _date | None
+    end_date: _date | None
     is_active: bool
+    #: Bounds of the current period (``None`` = unbounded) and what was spent in it,
+    #: including subcategories, in the budget's currency.
+    period_start: _date | None
+    period_end: _date | None
+    spent: Money

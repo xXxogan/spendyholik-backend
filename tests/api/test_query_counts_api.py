@@ -52,7 +52,18 @@ def _seed(client, n):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("path", "max_queries"),
-    [("/api/v1/transactions/", 2), ("/api/v1/dashboard/", 7), ("/api/v1/goals/", 3)],
+    [
+        ("/api/v1/transactions/", 2),
+        # auth, profile, month totals, accounts, 4 balance sources, budgets, categories, window
+        ("/api/v1/dashboard/", 11),
+        ("/api/v1/goals/", 3),
+        # auth, accounts, 4 balance sources
+        ("/api/v1/accounts/", 6),
+        # auth, budgets, categories, one aggregate per distinct period
+        ("/api/v1/budgets/", 4),
+        ("/api/v1/categories/", 3),
+        ("/api/v1/recurring/", 4),
+    ],
 )
 def test_list_endpoints_do_not_scale_with_rows(
     auth_client, django_assert_max_num_queries, path, max_queries

@@ -23,6 +23,7 @@ from shared.domain.currency_code import CurrencyCode
 from shared.exceptions import ValidationError
 from tests.fakes import (
     InMemoryAccountRepository,
+    InMemoryBalanceReader,
     InMemoryCategoryRepository,
     InMemoryTransactionRepository,
 )
@@ -66,14 +67,14 @@ def test_omitted_fields_are_kept_and_null_clears_nullable_ones():
 def test_null_for_required_field_is_rejected():
     accounts, _, _, rub, _ = _world()
     with pytest.raises(ValidationError):
-        UpdateAccount(accounts).execute(
+        UpdateAccount(accounts, InMemoryBalanceReader()).execute(
             USER, rub.id, UpdateAccountInput.model_validate({"name": None})
         )
 
 
 def test_last4_can_be_cleared():
     accounts, _, _, rub, _ = _world()
-    updated = UpdateAccount(accounts).execute(
+    updated = UpdateAccount(accounts, InMemoryBalanceReader()).execute(
         USER, rub.id, UpdateAccountInput.model_validate({"last4": None})
     )
     assert updated.last4 is None

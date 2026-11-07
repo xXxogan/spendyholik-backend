@@ -19,8 +19,11 @@ class DjangoNotificationRepository(NotificationRepository):
     def unread_count(self, user_id: UUID) -> int:
         return NotificationORM.objects.filter(user_id=user_id, is_read=False).count()
 
-    def mark_read(self, user_id: UUID, notification_id: UUID) -> None:
-        NotificationORM.objects.filter(pk=notification_id, user_id=user_id).update(is_read=True)
+    def mark_read(self, user_id: UUID, notification_id: UUID) -> bool:
+        updated = NotificationORM.objects.filter(pk=notification_id, user_id=user_id).update(
+            is_read=True
+        )
+        return updated > 0
 
     def mark_all_read(self, user_id: UUID) -> None:
         NotificationORM.objects.filter(user_id=user_id, is_read=False).update(is_read=True)

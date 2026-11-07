@@ -28,6 +28,7 @@ from accounts.domain.exceptions import (
     InvalidCredentialsError,
     PasswordResetTokenInvalidError,
     ProfileNotFoundError,
+    WrongPasswordError,
 )
 from accounts.domain.value_objects import Email
 from shared.exceptions import ValidationError as DomainValidationError
@@ -111,21 +112,46 @@ class TestProfile:
     def test_get_profile(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        profile = GetProfile(profiles).execute(result.user.id)
+        profile = GetProfile(profiles, users).execute(result.user.id)
         assert profile.base_currency == "RUB"
+        assert profile.email == "a@b.co"
 
     def test_get_profile_missing_raises(self):
         with pytest.raises(ProfileNotFoundError):
-            GetProfile(InMemoryProfileRepository()).execute(uuid4())
+            GetProfile(InMemoryProfileRepository(), InMemoryUserRepository()).execute(uuid4())
 
     def test_update_profile(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        updated = UpdateProfile(profiles).execute(
+        updated = UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
             result.user.id, UpdateProfileInput(onboarded=True, theme="dark")
         )
         assert updated.onboarded is True
         assert updated.theme.value == "dark"
+
+    def test_update_name_and_email(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        updated = UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
+            result.user.id, UpdateProfileInput(first_name="Аня", email="New@B.co")
+        )
+        assert (updated.first_name, updated.email) == ("Аня", "new@b.co")
+        assert users.get_by_id(result.user.id).email.value == "new@b.co"
+        LoginUser(users, hasher, tokens).execute(
+            LoginUserInput(email="new@b.co", password="password123")
+        )
+
+    def test_update_to_a_taken_email_rejected(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
+            RegisterUserInput(email="taken@b.co", password="password123")
+        )
+        with pytest.raises(EmailAlreadyTakenError) as exc:
+            UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
+                result.user.id, UpdateProfileInput(email="taken@b.co")
+            )
+        assert exc.value.errors == {"email": "email_already_taken"}
 
 
 class TestChangePassword:
@@ -144,10 +170,12 @@ class TestChangePassword:
     def test_wrong_old_password_raises(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        with pytest.raises(InvalidCredentialsError):
+        with pytest.raises(WrongPasswordError) as exc:
             ChangePassword(users, hasher, tokens).execute(
                 result.user.id, ChangePasswordInput(old_password="bad", new_password="newpass456")
             )
+        assert exc.value.http_status == 422
+        assert exc.value.errors == {"old_password": "wrong_password"}
 
 
 class TestPasswordReset:

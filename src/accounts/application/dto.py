@@ -63,6 +63,8 @@ class SocialLoginInput(BaseModel):
 class UpdateProfileInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    first_name: str | None = Field(default=None, max_length=150)
+    email: str | None = None
     base_currency: str | None = None
     theme: Theme | None = None
     onboarded: bool | None = None
@@ -92,6 +94,8 @@ class UserDTO:
 @dataclass(frozen=True, slots=True)
 class ProfileDTO:
     user_id: UUID
+    first_name: str
+    email: str
     base_currency: str
     theme: Theme
     onboarded: bool

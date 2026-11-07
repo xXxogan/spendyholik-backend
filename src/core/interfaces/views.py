@@ -8,7 +8,9 @@ from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, ok
+from core.interfaces.schemas import api_doc
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,13 @@ class _ProbeView(BaseAPIView):
 
 
 class HealthView(_ProbeView):
+    @api_doc(sc.HealthOut, errors=())
     def get(self, request: Request):
         return ok({"status": "ok"})
 
 
 class ReadyView(_ProbeView):
+    @api_doc(sc.ReadyOut, errors=())
     def get(self, request: Request):
         checks = {"database": self._database(), "cache": self._cache()}
         ready = all(checks.values())

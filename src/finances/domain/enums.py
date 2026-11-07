@@ -20,3 +20,11 @@ class BudgetPeriod(StrEnum):
     MONTHLY = "monthly"
     WEEKLY = "weekly"
     ONE_TIME = "one_time"
+
+
+class Granularity(StrEnum):
+    """Bucket size of a time series."""
+
+    DAY = "day"
+    MONTH = "month"
+    YEAR = "year"

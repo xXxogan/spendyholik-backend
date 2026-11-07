@@ -3,14 +3,21 @@ transactions, budgets)."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
+from datetime import timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from accounts.application.ports import ProfileRepository
+from finances.application.currency import CurrencyConverter
 from finances.application.dto import (
     AccountDTO,
+    AccountRefDTO,
+    BalancePointDTO,
     BudgetDTO,
     CategoryDTO,
+    CategoryRefDTO,
     CreateAccountInput,
     CreateBudgetInput,
     CreateCategoryInput,
@@ -26,32 +33,46 @@ from finances.application.dto import (
 )
 from finances.application.ports import (
     AccountRepository,
+    BalanceReader,
     BudgetRepository,
     CategoryRepository,
+    CurrencyTotals,
+    ExchangeRateRepository,
     TransactionRepository,
 )
 from finances.domain.entities import Account, Budget, Category, Transaction
-from finances.domain.enums import TransactionType
+from finances.domain.enums import BudgetPeriod, TransactionType
 from finances.domain.exceptions import (
     AccountArchivedError,
     AccountNotFoundError,
+    BudgetAlreadyExistsError,
     BudgetNotFoundError,
     CategoryCycleError,
     CategoryInUseError,
     CategoryNotFoundError,
+    InsufficientFundsError,
     TransactionNotFoundError,
 )
 from finances.domain.value_objects import CategoryColor
 from shared.application.patch import apply_patch
+from shared.domain.clock import Clock
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import DEFAULT_CURRENCY, Money
 from shared.exceptions import ValidationError
 
-
 # ---------------------------------------------------------------------------
 # Mappers (domain entity → output DTO)
 # ---------------------------------------------------------------------------
-def _account_dto(a: Account) -> AccountDTO:
+#: Longest balance history the account chart may ask for.
+MAX_HISTORY_WEEKS = 104
+
+
+def current_balance(account: Account, delta: Decimal | None) -> Money:
+    """Initial balance plus every movement of the account."""
+    return account.initial_balance + Money(delta or Decimal(0), account.currency.value)
+
+
+def _account_dto(a: Account, delta: Decimal | None = None) -> AccountDTO:
     return AccountDTO(
         id=a.id,
         name=a.name,
@@ -63,10 +84,11 @@ def _account_dto(a: Account) -> AccountDTO:
         credit_limit=a.credit_limit,
         interest_rate=a.interest_rate,
         is_archived=a.is_archived,
+        balance=current_balance(a, delta),
     )
 
 
-def _category_dto(c: Category) -> CategoryDTO:
+def _category_dto(c: Category, transaction_count: int = 0) -> CategoryDTO:
     return CategoryDTO(
         id=c.id,
         name=c.name,
@@ -75,7 +97,27 @@ def _category_dto(c: Category) -> CategoryDTO:
         color=c.color.value,
         parent_id=c.parent_id,
         is_system=c.is_system,
+        transaction_count=transaction_count,
     )
+
+
+def account_refs(accounts: AccountRepository, user_id: UUID) -> dict[UUID, AccountRefDTO]:
+    """``{id, name, color}`` of every account of the user, archived ones included."""
+    return {
+        a.id: AccountRefDTO(id=a.id, name=a.name, color=a.color.value)
+        for a in accounts.list_for_user(user_id, include_archived=True)
+    }
+
+
+def require_funds(balances: BalanceReader, account: Account, amount: Money, field: str) -> None:
+    """Raise :class:`InsufficientFundsError` when ``amount`` exceeds the current balance."""
+    delta = balances.deltas(account.user_id, [account.id]).get(account.id)
+    if amount > current_balance(account, delta):
+        raise InsufficientFundsError(field=field)
+
+
+def category_ref(c: Category) -> CategoryRefDTO:
+    return CategoryRefDTO(id=c.id, name=c.name, icon=c.icon, color=c.color.value)
 
 
 def _transaction_dto(t: Transaction, labels: TransactionLabels | None = None) -> TransactionDTO:
@@ -91,17 +133,6 @@ def _transaction_dto(t: Transaction, labels: TransactionLabels | None = None) ->
         receipt_id=t.receipt_id,
         transfer_to_account_id=t.transfer_to_account_id,
         labels=labels,
-    )
-
-
-def _budget_dto(b: Budget) -> BudgetDTO:
-    return BudgetDTO(
-        id=b.id,
-        category_id=b.category_id,
-        amount=b.amount,
-        period=b.period,
-        start_date=b.start_date,
-        is_active=b.is_active,
     )
 
 
@@ -133,14 +164,16 @@ class CreateAccount:
 
 
 class UpdateAccount:
-    def __init__(self, accounts: AccountRepository) -> None:
+    def __init__(self, accounts: AccountRepository, balances: BalanceReader) -> None:
         self._accounts = accounts
+        self._balances = balances
 
     def execute(self, user_id: UUID, account_id: UUID, data: UpdateAccountInput) -> AccountDTO:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
         currency = account.currency.value
+        delta = self._balances.deltas(user_id, [account_id]).get(account_id)
         updated = apply_patch(
             account,
             data,
@@ -150,41 +183,94 @@ class UpdateAccount:
                     "credit_limit",
                     lambda minor: Money.from_minor_units(minor, currency),
                 ),
+                # The movements stay as they are; the starting point moves instead.
+                "balance_minor": (
+                    "initial_balance",
+                    lambda minor: (
+                        Money.from_minor_units(minor, currency)
+                        - Money(delta or Decimal(0), currency)
+                    ),
+                ),
             },
             nullable={"last4", "credit_limit_minor"},
         )
-        return _account_dto(self._accounts.update(updated))
+        return _account_dto(self._accounts.update(updated), delta)
 
 
-class ArchiveAccount:
-    def __init__(self, accounts: AccountRepository) -> None:
+class _SetArchived:
+    archived: bool
+
+    def __init__(self, accounts: AccountRepository, balances: BalanceReader) -> None:
         self._accounts = accounts
+        self._balances = balances
 
     def execute(self, user_id: UUID, account_id: UUID) -> AccountDTO:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
-        return _account_dto(self._accounts.update(replace(account, is_archived=True)))
+        saved = self._accounts.update(replace(account, is_archived=self.archived))
+        return _account_dto(saved, self._balances.deltas(user_id, [account_id]).get(account_id))
+
+
+class ArchiveAccount(_SetArchived):
+    archived = True
+
+
+class UnarchiveAccount(_SetArchived):
+    archived = False
 
 
 class ListAccounts:
-    def __init__(self, accounts: AccountRepository) -> None:
+    def __init__(self, accounts: AccountRepository, balances: BalanceReader) -> None:
         self._accounts = accounts
+        self._balances = balances
 
     def execute(self, user_id: UUID, *, include_archived: bool = False) -> list[AccountDTO]:
         accounts = self._accounts.list_for_user(user_id, include_archived=include_archived)
-        return [_account_dto(a) for a in accounts]
+        deltas = self._balances.deltas(user_id, [a.id for a in accounts])
+        return [_account_dto(a, deltas.get(a.id)) for a in accounts]
 
 
 class GetAccountDetail:
-    def __init__(self, accounts: AccountRepository) -> None:
+    def __init__(self, accounts: AccountRepository, balances: BalanceReader) -> None:
         self._accounts = accounts
+        self._balances = balances
 
     def execute(self, user_id: UUID, account_id: UUID) -> AccountDTO:
         account = self._accounts.get_by_id(account_id, user_id)
         if account is None:
             raise AccountNotFoundError(account_id)
-        return _account_dto(account)
+        return _account_dto(account, self._balances.deltas(user_id, [account_id]).get(account_id))
+
+
+class GetBalanceHistory:
+    """Balance before the window, after every day with movements, and today, ascending."""
+
+    def __init__(self, accounts: AccountRepository, balances: BalanceReader, clock: Clock) -> None:
+        self._accounts = accounts
+        self._balances = balances
+        self._clock = clock
+
+    def execute(self, user_id: UUID, account_id: UUID, weeks: int = 6) -> list[BalancePointDTO]:
+        if not 1 <= weeks <= MAX_HISTORY_WEEKS:
+            msg = f"weeks must be within 1..{MAX_HISTORY_WEEKS}."
+            raise ValidationError(msg, field="weeks", field_code="invalid")
+        account = self._accounts.get_by_id(account_id, user_id)
+        if account is None:
+            raise AccountNotFoundError(account_id)
+        today = self._clock.now().date()
+        start = today - timedelta(weeks=weeks)
+        currency = account.currency.value
+        before = self._balances.deltas(user_id, [account_id], before=start).get(account_id)
+        balance = current_balance(account, before)
+        points = [BalancePointDTO(at=start, balance=balance)]
+        daily = self._balances.daily_deltas(user_id, account_id, start, today)
+        for day in sorted(daily):
+            balance = balance + Money(daily[day], currency)
+            points.append(BalancePointDTO(at=day, balance=balance))
+        if points[-1].at != today:
+            points.append(BalancePointDTO(at=today, balance=balance))
+        return points
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +281,10 @@ class ListCategories:
         self._categories = categories
 
     def execute(self, user_id: UUID) -> list[CategoryDTO]:
-        return [_category_dto(c) for c in self._categories.list_for_user(user_id)]
+        counts = self._categories.transaction_counts(user_id)
+        return [
+            _category_dto(c, counts.get(c.id, 0)) for c in self._categories.list_for_user(user_id)
+        ]
 
 
 class CreateCategory:
@@ -434,24 +523,131 @@ class ListTransactions:
 # ---------------------------------------------------------------------------
 # Budgets
 # ---------------------------------------------------------------------------
+def descendant_ids(categories: Iterable[Category], root_id: UUID) -> set[UUID]:
+    """``root_id`` and every category below it."""
+    children: dict[UUID, list[UUID]] = {}
+    for c in categories:
+        if c.parent_id is not None:
+            children.setdefault(c.parent_id, []).append(c.id)
+    result: set[UUID] = set()
+    stack = [root_id]
+    while stack:
+        current = stack.pop()
+        if current in result:
+            continue
+        result.add(current)
+        stack.extend(children.get(current, ()))
+    return result
+
+
+def merge_totals(totals: Iterable[CurrencyTotals | None]) -> CurrencyTotals:
+    merged: CurrencyTotals = {}
+    for bucket in totals:
+        for currency, money in (bucket or {}).items():
+            merged[currency] = merged.get(currency, Money.zero(currency)) + money
+    return merged
+
+
+class BudgetReporter:
+    """Renders budgets with their current period and the spending in it.
+
+    Spending counts expenses of the budget's category and all its subcategories,
+    converted into the budget's currency; one aggregate query per distinct period.
+    """
+
+    def __init__(
+        self,
+        transactions: TransactionRepository,
+        categories: CategoryRepository,
+        rates: ExchangeRateRepository,
+        clock: Clock,
+    ) -> None:
+        self._transactions = transactions
+        self._categories = categories
+        self._rates = rates
+        self._clock = clock
+
+    def report(self, user_id: UUID, budgets: list[Budget]) -> list[BudgetDTO]:
+        if not budgets:
+            return []
+        today = self._clock.now().date()
+        categories = self._categories.list_for_user(user_id)
+        by_id = {c.id: c for c in categories}
+        bounds = {b.id: b.period_bounds(today) for b in budgets}
+        spent_by_window = {
+            window: self._transactions.sum_by_category(
+                user_id, type=TransactionType.EXPENSE, date_from=window[0], date_to=window[1]
+            )
+            for window in set(bounds.values())
+        }
+        converters: dict[str, CurrencyConverter] = {}
+        result = []
+        for budget in budgets:
+            currency = budget.amount.currency
+            fx = converters.setdefault(currency, CurrencyConverter(self._rates, currency))
+            window = spent_by_window[bounds[budget.id]]
+            ids = descendant_ids(categories, budget.category_id)
+            category = by_id.get(budget.category_id)
+            result.append(
+                BudgetDTO(
+                    id=budget.id,
+                    category=category_ref(category)
+                    if category
+                    else CategoryRefDTO(
+                        id=budget.category_id, name="", icon="tag", color="default"
+                    ),
+                    amount=budget.amount,
+                    period=budget.period,
+                    start_date=budget.start_date,
+                    end_date=budget.end_date,
+                    is_active=budget.is_active,
+                    period_start=bounds[budget.id][0],
+                    period_end=bounds[budget.id][1],
+                    spent=fx.total(merge_totals(window.get(i) for i in ids)),
+                )
+            )
+        return result
+
+    def report_one(self, user_id: UUID, budget: Budget) -> BudgetDTO:
+        return self.report(user_id, [budget])[0]
+
+
+def _check_budget(
+    budgets: BudgetRepository,
+    categories: CategoryRepository,
+    budget: Budget,
+    *,
+    exclude_id: UUID | None = None,
+) -> None:
+    category = categories.get_by_id(budget.category_id, budget.user_id)
+    if category is None:
+        raise CategoryNotFoundError(budget.category_id)
+    if category.type is not TransactionType.EXPENSE:
+        msg = "A budget can only target an expense category."
+        raise ValidationError(msg, field="category_id", field_code="invalid")
+    if budget.period is BudgetPeriod.ONE_TIME:
+        for name in ("start_date", "end_date"):
+            if getattr(budget, name) is None:
+                msg = f"A one-time budget requires {name}."
+                raise ValidationError(msg, field=name, field_code="required")
+    if budgets.exists_for_category(budget.user_id, budget.category_id, exclude_id=exclude_id):
+        raise BudgetAlreadyExistsError
+
+
 class CreateBudget:
     def __init__(
         self,
         budgets: BudgetRepository,
         categories: CategoryRepository,
         profiles: ProfileRepository,
+        reporter: BudgetReporter,
     ) -> None:
         self._budgets = budgets
         self._categories = categories
         self._profiles = profiles
+        self._reporter = reporter
 
     def execute(self, user_id: UUID, data: CreateBudgetInput) -> BudgetDTO:
-        category = self._categories.get_by_id(data.category_id, user_id)
-        if category is None:
-            raise CategoryNotFoundError(data.category_id)
-        if category.type is not TransactionType.EXPENSE:
-            msg = "A budget can only target an expense category."
-            raise ValidationError(msg)
         # Budgets are denominated in the user's base currency.
         profile = self._profiles.get_by_user(user_id)
         currency = profile.base_currency.value if profile else DEFAULT_CURRENCY
@@ -461,15 +657,23 @@ class CreateBudget:
             amount=Money.from_minor_units(data.amount_minor, currency),
             period=data.period,
             start_date=data.start_date,
+            end_date=data.end_date,
             is_active=data.is_active,
         )
-        return _budget_dto(self._budgets.add(budget))
+        _check_budget(self._budgets, self._categories, budget)
+        return self._reporter.report_one(user_id, self._budgets.add(budget))
 
 
 class UpdateBudget:
-    def __init__(self, budgets: BudgetRepository, categories: CategoryRepository) -> None:
+    def __init__(
+        self,
+        budgets: BudgetRepository,
+        categories: CategoryRepository,
+        reporter: BudgetReporter,
+    ) -> None:
         self._budgets = budgets
         self._categories = categories
+        self._reporter = reporter
 
     def execute(self, user_id: UUID, budget_id: UUID, data: UpdateBudgetInput) -> BudgetDTO:
         budget = self._budgets.get_by_id(budget_id, user_id)
@@ -480,34 +684,31 @@ class UpdateBudget:
             budget,
             data,
             fields={"amount_minor": ("amount", lambda m: Money.from_minor_units(m, currency))},
-            nullable={"start_date"},
+            nullable={"start_date", "end_date"},
         )
-        category = self._categories.get_by_id(updated.category_id, user_id)
-        if category is None:
-            raise CategoryNotFoundError(updated.category_id)
-        if category.type is not TransactionType.EXPENSE:
-            msg = "A budget can only target an expense category."
-            raise ValidationError(msg)
-        return _budget_dto(self._budgets.update(updated))
+        _check_budget(self._budgets, self._categories, updated, exclude_id=budget_id)
+        return self._reporter.report_one(user_id, self._budgets.update(updated))
 
 
 class ListBudgets:
-    def __init__(self, budgets: BudgetRepository) -> None:
+    def __init__(self, budgets: BudgetRepository, reporter: BudgetReporter) -> None:
         self._budgets = budgets
+        self._reporter = reporter
 
     def execute(self, user_id: UUID) -> list[BudgetDTO]:
-        return [_budget_dto(b) for b in self._budgets.list_for_user(user_id)]
+        return self._reporter.report(user_id, self._budgets.list_for_user(user_id))
 
 
 class GetBudgetDetail:
-    def __init__(self, budgets: BudgetRepository) -> None:
+    def __init__(self, budgets: BudgetRepository, reporter: BudgetReporter) -> None:
         self._budgets = budgets
+        self._reporter = reporter
 
     def execute(self, user_id: UUID, budget_id: UUID) -> BudgetDTO:
         budget = self._budgets.get_by_id(budget_id, user_id)
         if budget is None:
             raise BudgetNotFoundError(budget_id)
-        return _budget_dto(budget)
+        return self._reporter.report_one(user_id, budget)
 
 
 class DeleteBudget:

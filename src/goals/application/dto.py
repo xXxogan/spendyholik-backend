@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from finances.application.dto import AccountRefDTO
 from shared.domain.money import Money
 
 
@@ -17,7 +18,8 @@ class CreateGoalInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     target_amount_minor: int = Field(gt=0)
     currency: str
-    account_id: UUID
+    #: Needed only to fund ``initial_amount_minor``; that amount leaves the account.
+    account_id: UUID | None = None
     initial_amount_minor: int = Field(default=0, ge=0)
     deadline: date | None = None
     icon: str = "flag"
@@ -48,7 +50,7 @@ class GoalDTO:
     name: str
     target_amount: Money
     current_amount: Money
-    account_id: UUID
+    account_id: UUID | None
     deadline: date | None
     icon: str
     color: str
@@ -59,9 +61,10 @@ class GoalDTO:
 class GoalContributionDTO:
     id: UUID
     goal_id: UUID
-    account_id: UUID
+    account_id: UUID | None
     amount: Money
     date: date
+    account: AccountRefDTO | None = None
 
 
 @dataclass(frozen=True, slots=True)

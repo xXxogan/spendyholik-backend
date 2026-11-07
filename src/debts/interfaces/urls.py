@@ -2,7 +2,12 @@
 
 from django.urls import path
 
-from debts.interfaces.views import DebtDetailView, DebtListCreateView, DebtRepayView
+from debts.interfaces.views import (
+    DebtDetailView,
+    DebtHistoryView,
+    DebtListCreateView,
+    DebtRepayView,
+)
 
 app_name = "debts"
 
@@ -10,4 +15,5 @@ urlpatterns = [
     path("debts/", DebtListCreateView.as_view(), name="debt-list"),
     path("debts/<uuid:pk>/", DebtDetailView.as_view(), name="debt-detail"),
     path("debts/<uuid:pk>/repay/", DebtRepayView.as_view(), name="debt-repay"),
+    path("debts/<uuid:pk>/history/", DebtHistoryView.as_view(), name="debt-history"),
 ]

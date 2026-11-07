@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from debts.domain.enums import DebtDirection
 
@@ -24,6 +25,8 @@ class Debt(models.Model):
     currency = models.CharField(max_length=3)
     due_date = models.DateField(null=True, blank=True)
     is_closed = models.BooleanField(default=False)
+    note = models.TextField(max_length=2000, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
 
     class Meta:
         ordering = ("-is_closed", "due_date")

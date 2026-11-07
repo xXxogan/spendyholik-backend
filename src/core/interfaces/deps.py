@@ -13,6 +13,7 @@ from accounts.application.use_cases import (
     RequestPasswordReset,
     SocialLogin,
     UpdateProfile,
+    WipeUserData,
 )
 from accounts.infrastructure.gateways import (
     DjangoCachePasswordResetGateway,
@@ -26,11 +27,15 @@ from analytics.application.use_cases import (
     GetMonthlyTrend,
     GetSpendingByCategory,
     GetSummary,
+    GetTrend,
 )
+from core.infrastructure.balances import DjangoBalanceReader
+from core.infrastructure.erasure import DjangoUserDataEraser
 from debts.application.use_cases import (
     CreateDebt,
     DeleteDebt,
     GetDebtDetail,
+    GetDebtHistory,
     ListDebts,
     RepayDebt,
     UpdateDebt,
@@ -38,6 +43,7 @@ from debts.application.use_cases import (
 from debts.infrastructure.repositories import DjangoDebtPaymentRepository, DjangoDebtRepository
 from finances.application.use_cases import (
     ArchiveAccount,
+    BudgetReporter,
     CreateAccount,
     CreateBudget,
     CreateCategory,
@@ -46,12 +52,14 @@ from finances.application.use_cases import (
     DeleteCategory,
     DeleteTransaction,
     GetAccountDetail,
+    GetBalanceHistory,
     GetBudgetDetail,
     GetTransaction,
     ListAccounts,
     ListBudgets,
     ListCategories,
     ListTransactions,
+    UnarchiveAccount,
     UpdateAccount,
     UpdateBudget,
     UpdateCategory,
@@ -70,6 +78,7 @@ from goals.application.use_cases import (
     DeleteGoal,
     ForecastGoal,
     GetGoalDetail,
+    ListGoalContributions,
     ListGoals,
     UpdateGoal,
 )
@@ -133,10 +142,13 @@ class Container:
         )
 
     def get_profile(self) -> GetProfile:
-        return GetProfile(DjangoProfileRepository())
+        return GetProfile(DjangoProfileRepository(), DjangoUserRepository())
 
     def update_profile(self) -> UpdateProfile:
-        return UpdateProfile(DjangoProfileRepository())
+        return UpdateProfile(DjangoProfileRepository(), DjangoUserRepository(), DjangoUnitOfWork())
+
+    def wipe_user_data(self) -> WipeUserData:
+        return WipeUserData(DjangoUserDataEraser(), DjangoUnitOfWork())
 
     def change_password(self) -> ChangePassword:
         return ChangePassword(
@@ -148,16 +160,22 @@ class Container:
         return CreateAccount(DjangoAccountRepository())
 
     def update_account(self) -> UpdateAccount:
-        return UpdateAccount(DjangoAccountRepository())
+        return UpdateAccount(DjangoAccountRepository(), DjangoBalanceReader())
 
     def archive_account(self) -> ArchiveAccount:
-        return ArchiveAccount(DjangoAccountRepository())
+        return ArchiveAccount(DjangoAccountRepository(), DjangoBalanceReader())
+
+    def unarchive_account(self) -> UnarchiveAccount:
+        return UnarchiveAccount(DjangoAccountRepository(), DjangoBalanceReader())
 
     def list_accounts(self) -> ListAccounts:
-        return ListAccounts(DjangoAccountRepository())
+        return ListAccounts(DjangoAccountRepository(), DjangoBalanceReader())
 
     def get_account_detail(self) -> GetAccountDetail:
-        return GetAccountDetail(DjangoAccountRepository())
+        return GetAccountDetail(DjangoAccountRepository(), DjangoBalanceReader())
+
+    def get_balance_history(self) -> GetBalanceHistory:
+        return GetBalanceHistory(DjangoAccountRepository(), DjangoBalanceReader(), SystemClock())
 
     def list_categories(self) -> ListCategories:
         return ListCategories(DjangoCategoryRepository())
@@ -190,26 +208,46 @@ class Container:
     def list_transactions(self) -> ListTransactions:
         return ListTransactions(DjangoTransactionRepository())
 
+    def _budget_reporter(self) -> BudgetReporter:
+        return BudgetReporter(
+            DjangoTransactionRepository(),
+            DjangoCategoryRepository(),
+            DjangoExchangeRateRepository(),
+            SystemClock(),
+        )
+
     def create_budget(self) -> CreateBudget:
         return CreateBudget(
-            DjangoBudgetRepository(), DjangoCategoryRepository(), DjangoProfileRepository()
+            DjangoBudgetRepository(),
+            DjangoCategoryRepository(),
+            DjangoProfileRepository(),
+            self._budget_reporter(),
         )
 
     def update_budget(self) -> UpdateBudget:
-        return UpdateBudget(DjangoBudgetRepository(), DjangoCategoryRepository())
+        return UpdateBudget(
+            DjangoBudgetRepository(), DjangoCategoryRepository(), self._budget_reporter()
+        )
 
     def list_budgets(self) -> ListBudgets:
-        return ListBudgets(DjangoBudgetRepository())
+        return ListBudgets(DjangoBudgetRepository(), self._budget_reporter())
 
     def get_budget_detail(self) -> GetBudgetDetail:
-        return GetBudgetDetail(DjangoBudgetRepository())
+        return GetBudgetDetail(DjangoBudgetRepository(), self._budget_reporter())
 
     def delete_budget(self) -> DeleteBudget:
         return DeleteBudget(DjangoBudgetRepository())
 
     # --- goals ---
     def create_goal(self) -> CreateGoal:
-        return CreateGoal(DjangoGoalRepository(), DjangoAccountRepository())
+        return CreateGoal(
+            DjangoGoalRepository(),
+            DjangoGoalContributionRepository(),
+            DjangoAccountRepository(),
+            DjangoBalanceReader(),
+            DjangoUnitOfWork(),
+            SystemClock(),
+        )
 
     def update_goal(self) -> UpdateGoal:
         return UpdateGoal(DjangoGoalRepository(), DjangoGoalContributionRepository())
@@ -225,7 +263,13 @@ class Container:
             DjangoGoalRepository(),
             DjangoGoalContributionRepository(),
             DjangoAccountRepository(),
+            DjangoBalanceReader(),
             DjangoUnitOfWork(),
+        )
+
+    def list_goal_contributions(self) -> ListGoalContributions:
+        return ListGoalContributions(
+            DjangoGoalRepository(), DjangoGoalContributionRepository(), DjangoAccountRepository()
         )
 
     def delete_goal(self) -> DeleteGoal:
@@ -242,6 +286,7 @@ class Container:
             DjangoRecurringTransactionRepository(),
             DjangoAccountRepository(),
             DjangoCategoryRepository(),
+            SystemClock(),
         )
 
     def update_recurring(self) -> UpdateRecurring:
@@ -249,16 +294,25 @@ class Container:
             DjangoRecurringTransactionRepository(),
             DjangoAccountRepository(),
             DjangoCategoryRepository(),
+            SystemClock(),
         )
 
     def toggle_recurring(self) -> ToggleRecurring:
-        return ToggleRecurring(DjangoRecurringTransactionRepository())
+        return ToggleRecurring(
+            DjangoRecurringTransactionRepository(),
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+        )
 
     def delete_recurring(self) -> DeleteRecurring:
         return DeleteRecurring(DjangoRecurringTransactionRepository())
 
     def list_recurring(self) -> ListRecurring:
-        return ListRecurring(DjangoRecurringTransactionRepository())
+        return ListRecurring(
+            DjangoRecurringTransactionRepository(),
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+        )
 
     def run_due_recurring(self) -> RunDueRecurring:
         return RunDueRecurring(
@@ -270,10 +324,10 @@ class Container:
 
     # --- debts ---
     def create_debt(self) -> CreateDebt:
-        return CreateDebt(DjangoDebtRepository())
+        return CreateDebt(DjangoDebtRepository(), SystemClock())
 
     def update_debt(self) -> UpdateDebt:
-        return UpdateDebt(DjangoDebtRepository())
+        return UpdateDebt(DjangoDebtRepository(), DjangoUnitOfWork())
 
     def list_debts(self) -> ListDebts:
         return ListDebts(DjangoDebtRepository())
@@ -284,11 +338,17 @@ class Container:
     def get_debt_detail(self) -> GetDebtDetail:
         return GetDebtDetail(DjangoDebtRepository(), DjangoDebtPaymentRepository())
 
+    def get_debt_history(self) -> GetDebtHistory:
+        return GetDebtHistory(
+            DjangoDebtRepository(), DjangoDebtPaymentRepository(), DjangoAccountRepository()
+        )
+
     def repay_debt(self) -> RepayDebt:
         return RepayDebt(
             DjangoDebtRepository(),
             DjangoDebtPaymentRepository(),
             DjangoAccountRepository(),
+            DjangoBalanceReader(),
             DjangoUnitOfWork(),
         )
 
@@ -301,6 +361,8 @@ class Container:
             DjangoProfileRepository(),
             DjangoExchangeRateRepository(),
             SystemClock(),
+            DjangoBalanceReader(),
+            DjangoCategoryRepository(),
         )
 
     def get_summary(self) -> GetSummary:
@@ -318,6 +380,14 @@ class Container:
 
     def get_monthly_trend(self) -> GetMonthlyTrend:
         return GetMonthlyTrend(
+            DjangoTransactionRepository(),
+            DjangoProfileRepository(),
+            DjangoExchangeRateRepository(),
+            SystemClock(),
+        )
+
+    def get_trend(self) -> GetTrend:
+        return GetTrend(
             DjangoTransactionRepository(),
             DjangoProfileRepository(),
             DjangoExchangeRateRepository(),

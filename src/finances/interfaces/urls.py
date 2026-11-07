@@ -4,8 +4,10 @@ from django.urls import path
 
 from finances.interfaces.views import (
     AccountArchiveView,
+    AccountBalanceHistoryView,
     AccountDetailView,
     AccountListCreateView,
+    AccountUnarchiveView,
     BudgetDetailView,
     BudgetListCreateView,
     CategoryDetailView,
@@ -20,6 +22,12 @@ urlpatterns = [
     path("accounts/", AccountListCreateView.as_view(), name="account-list"),
     path("accounts/<uuid:pk>/", AccountDetailView.as_view(), name="account-detail"),
     path("accounts/<uuid:pk>/archive/", AccountArchiveView.as_view(), name="account-archive"),
+    path("accounts/<uuid:pk>/unarchive/", AccountUnarchiveView.as_view(), name="account-unarchive"),
+    path(
+        "accounts/<uuid:pk>/balance-history/",
+        AccountBalanceHistoryView.as_view(),
+        name="account-balance-history",
+    ),
     path("transactions/", TransactionListCreateView.as_view(), name="transaction-list"),
     path("transactions/<uuid:pk>/", TransactionDetailView.as_view(), name="transaction-detail"),
     path("categories/", CategoryListCreateView.as_view(), name="category-list"),

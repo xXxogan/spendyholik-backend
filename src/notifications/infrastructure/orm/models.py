@@ -18,7 +18,10 @@ class Notification(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications"
     )
     type = models.CharField(max_length=30, choices=_choices(NotificationType))
-    title = models.CharField(max_length=200)
+    subject = models.CharField(max_length=200, blank=True, default="")
+    amount_minor = models.BigIntegerField(null=True, blank=True)
+    percent = models.PositiveSmallIntegerField(null=True, blank=True)
+    title = models.CharField(max_length=200, blank=True, default="")
     body = models.TextField(blank=True, default="")
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

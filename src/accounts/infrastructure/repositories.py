@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
 from accounts.application.ports import ProfileRepository, UserRepository
 from accounts.domain.entities import Profile, User
@@ -43,7 +43,11 @@ class DjangoUserRepository(UserRepository):
         orm = UserORM.objects.get(pk=user.id)
         orm.first_name = user.first_name
         orm.email = user.email.value
-        orm.save(update_fields=["first_name", "email"])
+        try:
+            with transaction.atomic():
+                orm.save(update_fields=["first_name", "email"])
+        except IntegrityError as exc:
+            raise EmailAlreadyTakenError from exc
         return user
 
     def get_password_hash(self, user_id: UUID) -> str | None:

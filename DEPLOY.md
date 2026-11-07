@@ -312,6 +312,9 @@ env:
   ALLOWED_HOSTS: "api.<domain>"
   CSRF_TRUSTED_ORIGINS: "https://api.<domain>"
   CORS_ALLOWED_ORIGINS: "https://app.<domain>"
+  # Flutter Web в разработке (`flutter run -d chrome`) — localhost на любом порту;
+  # уже задано в values.yaml, уберите (""), если локальный Web не нужен.
+  CORS_ALLOWED_ORIGIN_REGEXES: '^http://(localhost|127\.0\.0\.1)(:\d+)?$'
   SECURE_SSL_REDIRECT: "true"
   SECURE_COOKIES: "true"
   SECURE_HSTS_SECONDS: "31536000"

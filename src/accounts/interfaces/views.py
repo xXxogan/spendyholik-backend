@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 
@@ -16,8 +15,10 @@ from accounts.application.dto import (
     SocialLoginInput,
     UpdateProfileInput,
 )
-from core.interfaces.api import BaseAPIView, created, ok
+from core.interfaces import schemas as sc
+from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
+from core.interfaces.schemas import api_doc
 
 
 def _auth_view(result) -> dict:
@@ -37,6 +38,8 @@ def _auth_view(result) -> dict:
 def _profile_view(dto) -> dict:
     return {
         "user_id": str(dto.user_id),
+        "first_name": dto.first_name,
+        "email": dto.email,
         "base_currency": dto.base_currency,
         "theme": dto.theme.value,
         "onboarded": dto.onboarded,
@@ -50,7 +53,7 @@ def _profile_view(dto) -> dict:
 class RegisterView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=RegisterUserInput)
+    @api_doc(sc.AuthOut, request=RegisterUserInput, status=201, errors=(409, 422))
     def post(self, request: Request):
         data = self.parse(RegisterUserInput, request.data)
         return created(_auth_view(container.register_user().execute(data)))
@@ -59,7 +62,7 @@ class RegisterView(BaseAPIView):
 class LoginView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=LoginUserInput)
+    @api_doc(sc.AuthOut, request=LoginUserInput, errors=(401, 422))
     def post(self, request: Request):
         data = self.parse(LoginUserInput, request.data)
         return ok(_auth_view(container.login_user().execute(data)))
@@ -68,7 +71,7 @@ class LoginView(BaseAPIView):
 class RefreshTokenView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=RefreshTokenInput)
+    @api_doc(sc.TokensOut, request=RefreshTokenInput, errors=(401, 422))
     def post(self, request: Request):
         data = self.parse(RefreshTokenInput, request.data)
         pair = container.refresh_token().execute(data)
@@ -85,7 +88,7 @@ class RefreshTokenView(BaseAPIView):
 class LogoutView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=RefreshTokenInput)
+    @api_doc(sc.DetailOut, request=RefreshTokenInput, errors=(401, 422))
     def post(self, request: Request):
         data = self.parse(RefreshTokenInput, request.data)
         container.logout_user().execute(data)
@@ -95,7 +98,7 @@ class LogoutView(BaseAPIView):
 class RequestPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=RequestPasswordResetInput)
+    @api_doc(sc.PasswordResetOut, request=RequestPasswordResetInput, errors=(422,))
     def post(self, request: Request):
         data = self.parse(RequestPasswordResetInput, request.data)
         result = container.request_password_reset().execute(data)
@@ -105,7 +108,7 @@ class RequestPasswordResetView(BaseAPIView):
 class ConfirmPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=ConfirmPasswordResetInput)
+    @api_doc(sc.DetailOut, request=ConfirmPasswordResetInput, errors=(422,))
     def post(self, request: Request):
         data = self.parse(ConfirmPasswordResetInput, request.data)
         container.confirm_password_reset().execute(data)
@@ -115,7 +118,7 @@ class ConfirmPasswordResetView(BaseAPIView):
 class SocialLoginView(BaseAPIView):
     permission_classes = [AllowAny]
 
-    @extend_schema(request=SocialLoginInput)
+    @api_doc(sc.AuthOut, request=SocialLoginInput, errors=(401, 422))
     def post(self, request: Request, provider: str):
         data = self.parse(
             SocialLoginInput,
@@ -127,19 +130,36 @@ class SocialLoginView(BaseAPIView):
 class ProfileView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
+    @api_doc(sc.ProfileOut, errors=sc.READ)
     def get(self, request: Request):
         return ok(_profile_view(container.get_profile().execute(request.user.id)))
 
-    @extend_schema(request=UpdateProfileInput)
+    @api_doc(sc.ProfileOut, request=UpdateProfileInput, errors=sc.WRITE)
     def patch(self, request: Request):
         data = self.parse(UpdateProfileInput, request.data)
         return ok(_profile_view(container.update_profile().execute(request.user.id, data)))
 
 
+class ProfileDataView(BaseAPIView):
+    permission_classes = [IsAuthenticated]
+
+    @api_doc(
+        None,
+        status=204,
+        description=(
+            "Deletes all accounts, transactions, categories, budgets, goals, debts, "
+            "recurring templates and notifications; the user and settings stay."
+        ),
+    )
+    def delete(self, request: Request):
+        container.wipe_user_data().execute(request.user.id)
+        return no_content()
+
+
 class ChangePasswordView(BaseAPIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=ChangePasswordInput)
+    @api_doc(sc.DetailOut, request=ChangePasswordInput, errors=(401, 422))
     def patch(self, request: Request):
         data = self.parse(ChangePasswordInput, request.data)
         container.change_password().execute(request.user.id, data)

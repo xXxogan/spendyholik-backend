@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from accounts.application.ports import (
@@ -21,12 +23,14 @@ from accounts.domain.value_objects import Email
 from finances.application.dto import TransactionLabels
 from finances.application.ports import (
     AccountRepository,
+    BalanceReader,
     BudgetRepository,
     CategoryRepository,
     ExchangeRateRepository,
     TransactionRepository,
 )
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
+from finances.domain.enums import Granularity, TransactionType
 from shared.application.ports import ExchangeRateProvider, UnitOfWork
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import Money
@@ -211,6 +215,7 @@ class InMemoryAccountRepository(AccountRepository):
 class InMemoryCategoryRepository(CategoryRepository):
     def __init__(self) -> None:
         self._by_id: dict[UUID, Category] = {}
+        self.counts: dict[UUID, int] = {}  # set by tests that need it
 
     def add(self, category: Category) -> Category:
         self._by_id[category.id] = category
@@ -246,6 +251,9 @@ class InMemoryCategoryRepository(CategoryRepository):
 
     def has_transactions(self, category_id: UUID, user_id: UUID) -> bool:
         return False  # overridden by tests that need it
+
+    def transaction_counts(self, user_id: UUID) -> dict[UUID, int]:
+        return dict(self.counts)
 
     def has_budgets(self, category_id: UUID, user_id: UUID) -> bool:
         return False  # overridden by tests that need it
@@ -314,7 +322,12 @@ class InMemoryTransactionRepository(TransactionRepository):
         if account_id is not None:
             items = [t for t in items if t.account_id == account_id]
         if category_id is not None:
-            items = [t for t in items if t.category_id == category_id]
+            ids = {category_id}
+            if self._categories is not None:
+                from finances.application.use_cases import descendant_ids
+
+                ids = descendant_ids(self._categories.list_for_user(user_id), category_id)
+            items = [t for t in items if t.category_id in ids]
         if type is not None:
             items = [t for t in items if t.type is type]
         if date_from is not None:
@@ -373,6 +386,19 @@ class InMemoryTransactionRepository(TransactionRepository):
             user_id, date_from, date_to, lambda t: (t.date.replace(day=1), t.type)
         )
 
+    def period_totals(self, user_id, *, granularity, date_from=None, date_to=None):
+        def bucket(t):
+            if granularity is Granularity.YEAR:
+                return t.date.replace(month=1, day=1), t.type
+            if granularity is Granularity.MONTH:
+                return t.date.replace(day=1), t.type
+            return t.date, t.type
+
+        return self._aggregate(user_id, date_from, date_to, bucket)
+
+    def all(self) -> list[Transaction]:
+        return list(self._by_id.values())
+
     def category_is_used(self, category_id: UUID) -> bool:
         return category_id in self._category_usage
 
@@ -400,6 +426,62 @@ class InMemoryBudgetRepository(BudgetRepository):
 
     def delete(self, budget_id: UUID, user_id: UUID) -> bool:
         return _pop_owned(self._by_id, budget_id, user_id)
+
+    def exists_for_category(self, user_id, category_id, *, exclude_id=None) -> bool:
+        return any(
+            b.user_id == user_id and b.category_id == category_id and b.id != exclude_id
+            for b in self._by_id.values()
+        )
+
+
+class InMemoryBalanceReader(BalanceReader):
+    """Balances from the in-memory transactions, contributions and debt payments."""
+
+    def __init__(self, transactions=None, contributions=None, payments=None, debts=None) -> None:
+        self._transactions = transactions
+        self._contributions = contributions
+        self._payments = payments
+        self._debts = debts
+
+    def _movements(self, user_id):
+        """``(account_id, date, signed amount)`` of every movement of the user."""
+        if self._transactions is not None:
+            for t in self._transactions.all():
+                if t.user_id != user_id:
+                    continue
+                if t.type is TransactionType.INCOME:
+                    yield t.account_id, t.date, t.amount.amount
+                else:
+                    yield t.account_id, t.date, -t.amount.amount
+                if t.type is TransactionType.TRANSFER:
+                    yield t.transfer_to_account_id, t.date, t.amount.amount
+        if self._contributions is not None:
+            for items in self._contributions._by_goal.values():
+                for c in items:
+                    yield c.account_id, c.date, -c.amount.amount
+        if self._payments is not None:
+            for debt_id, items in self._payments._by_debt.items():
+                debt = self._debts._by_id.get(debt_id) if self._debts else None
+                sign = -1 if debt is None or debt.direction.value == "i_owe" else 1
+                for p in items:
+                    yield p.account_id, p.date, sign * p.amount.amount
+
+    def deltas(self, user_id, account_ids=None, *, before=None):
+        result: dict[UUID, Decimal] = {}
+        for account_id, day, amount in self._movements(user_id):
+            if account_ids is not None and account_id not in account_ids:
+                continue
+            if before is not None and day >= before:
+                continue
+            result[account_id] = result.get(account_id, Decimal(0)) + amount
+        return result
+
+    def daily_deltas(self, user_id, account_id, date_from, date_to):
+        result: dict[date, Decimal] = {}
+        for acct, day, amount in self._movements(user_id):
+            if acct == account_id and date_from <= day <= date_to:
+                result[day] = result.get(day, Decimal(0)) + amount
+        return {d: v for d, v in result.items() if v}
 
 
 class InMemoryExchangeRateRepository(ExchangeRateRepository):
@@ -573,19 +655,12 @@ class InMemoryNotificationRepository:
 
     def mark_read(self, user_id, notification_id):
         n = self._by_id.get(notification_id)
-        if n and n.user_id == user_id:
-            self._by_id[notification_id] = type(n)(
-                user_id=n.user_id, type=n.type, title=n.title, body=n.body, is_read=True, id=n.id
-            )
+        if n is None or n.user_id != user_id:
+            return False
+        self._by_id[notification_id] = replace(n, is_read=True)
+        return True
 
     def mark_all_read(self, user_id):
         for nid, n in list(self._by_id.items()):
             if n.user_id == user_id and not n.is_read:
-                self._by_id[nid] = type(n)(
-                    user_id=n.user_id,
-                    type=n.type,
-                    title=n.title,
-                    body=n.body,
-                    is_read=True,
-                    id=n.id,
-                )
+                self._by_id[nid] = replace(n, is_read=True)
