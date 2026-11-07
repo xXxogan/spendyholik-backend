@@ -65,7 +65,7 @@ class CreateTransactionInput(BaseModel):
 
     account_id: UUID
     type: TransactionType
-    amount_minor: int
+    amount_minor: int = Field(gt=0)
     date: _date
     category_id: UUID | None = None
     time: _time | None = None
@@ -78,7 +78,7 @@ class UpdateTransactionInput(BaseModel):
 
     account_id: UUID | None = None
     category_id: UUID | None = None
-    amount_minor: int | None = None
+    amount_minor: int | None = Field(default=None, gt=0)
     date: _date | None = None
     time: _time | None = None
     note: str | None = None

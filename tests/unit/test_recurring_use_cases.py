@@ -9,6 +9,7 @@ from tests.fakes import (
     FakeClock,
     FakeUnitOfWork,
     InMemoryAccountRepository,
+    InMemoryCategoryRepository,
     InMemoryRecurringTransactionRepository,
     InMemoryTransactionRepository,
 )
@@ -26,7 +27,7 @@ def _account():
 
 
 def _recurring(recurring_repo, accounts, acct_id, next_run=TODAY, frequency="monthly"):
-    return CreateRecurring(recurring_repo, accounts).execute(
+    return CreateRecurring(recurring_repo, accounts, InMemoryCategoryRepository()).execute(
         USER,
         CreateRecurringInput(
             name="Аренда",
@@ -139,3 +140,17 @@ class TestRunDueRecurring:
 
         assert result.generated == 1
         assert result.skipped == 1
+
+
+class TestMonthEndSchedule:
+    def test_template_on_31st_does_not_drift_across_runs(self):
+        accounts, acct_id = _account()
+        recurring = InMemoryRecurringTransactionRepository()
+        transactions = InMemoryTransactionRepository()
+        _recurring(recurring, accounts, acct_id, next_run=date(2026, 1, 31))
+        for today in (date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)):
+            _run(recurring, transactions, today=today)
+        dates = sorted(t.date for t in transactions._by_id.values())
+        assert dates == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31)]
+        (template,) = recurring.list_for_user(USER)
+        assert template.next_run == date(2026, 4, 30)

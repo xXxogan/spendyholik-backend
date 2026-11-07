@@ -17,7 +17,7 @@ class CreateRecurringInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str = Field(min_length=1, max_length=120)
-    amount_minor: int
+    amount_minor: int = Field(gt=0)
     type: TransactionType
     account_id: UUID
     frequency: RecurringFrequency
@@ -30,7 +30,7 @@ class UpdateRecurringInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    amount_minor: int | None = None
+    amount_minor: int | None = Field(default=None, gt=0)
     account_id: UUID | None = None
     category_id: UUID | None = None
     frequency: RecurringFrequency | None = None

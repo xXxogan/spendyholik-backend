@@ -171,6 +171,9 @@ class DjangoCategoryRepository(CategoryRepository):
     def has_transactions(self, category_id: UUID, user_id: UUID) -> bool:
         return TransactionORM.objects.filter(category_id=category_id, user_id=user_id).exists()
 
+    def has_budgets(self, category_id: UUID, user_id: UUID) -> bool:
+        return BudgetORM.objects.filter(category_id=category_id, user_id=user_id).exists()
+
 
 class DjangoTransactionRepository(TransactionRepository):
     def add(self, transaction: Transaction) -> Transaction:

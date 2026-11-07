@@ -146,6 +146,9 @@ class ContributeToGoal:
         account = self._accounts.get_by_id(data.account_id, user_id)
         if account is None:
             raise AccountNotFoundError(data.account_id)
+        if account.currency.value != goal.target_amount.currency:
+            msg = f"Account currency must match goal currency {goal.target_amount.currency}."
+            raise ValidationError(msg)
         with self._uow:
             contribution = self._contributions.add(
                 GoalContribution(

@@ -31,6 +31,7 @@ class DjangoRecurringTransactionRepository(RecurringTransactionRepository):
             frequency=recurring.frequency.value,
             next_run=recurring.next_run,
             is_active=recurring.is_active,
+            anchor=recurring.anchor,
         )
         return recurring
 

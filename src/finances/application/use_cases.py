@@ -253,12 +253,33 @@ class DeleteCategory:
             raise CategoryInUseError("System categories cannot be deleted.")
         if self._categories.has_transactions(category_id, user_id):
             raise CategoryInUseError
+        if self._categories.has_budgets(category_id, user_id):
+            raise CategoryInUseError("The category has budgets; delete them first.")
         self._categories.delete(category_id, user_id)
 
 
 # ---------------------------------------------------------------------------
 # Transactions
 # ---------------------------------------------------------------------------
+def require_category(
+    categories: CategoryRepository,
+    user_id: UUID,
+    category_id: UUID | None,
+    tx_type: TransactionType,
+) -> None:
+    """Check that ``category_id`` (if any) is the user's and fits ``tx_type``."""
+    if category_id is None:
+        return
+    category = categories.get_by_id(category_id, user_id)
+    if category is None:
+        raise CategoryNotFoundError(category_id)
+    if tx_type in (TransactionType.EXPENSE, TransactionType.INCOME) and category.type != tx_type:
+        msg = (
+            f"Category type {category.type.value} does not match transaction type {tx_type.value}."
+        )
+        raise ValidationError(msg)
+
+
 class _TransactionGuard:
     def __init__(
         self,
@@ -280,24 +301,6 @@ class _TransactionGuard:
             raise AccountArchivedError
         return account
 
-    def _require_category(
-        self, user_id: UUID, category_id: UUID | None, tx_type: TransactionType
-    ) -> None:
-        if category_id is None:
-            return
-        category = self._categories.get_by_id(category_id, user_id)
-        if category is None:
-            raise CategoryNotFoundError(category_id)
-        if (
-            tx_type in (TransactionType.EXPENSE, TransactionType.INCOME)
-            and category.type != tx_type
-        ):
-            msg = (
-                f"Category type {category.type.value} does not match "
-                f"transaction type {tx_type.value}."
-            )
-            raise ValidationError(msg)
-
     def validate(
         self,
         user_id: UUID,
@@ -315,7 +318,7 @@ class _TransactionGuard:
                 msg = "Cross-currency transfers are not supported yet."
                 raise ValidationError(msg)
         # A missing or identical destination is rejected by the Transaction entity.
-        self._require_category(user_id, category_id, tx_type)
+        require_category(self._categories, user_id, category_id, tx_type)
         return account
 
 

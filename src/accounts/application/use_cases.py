@@ -186,9 +186,15 @@ class UpdateProfile:
 
 
 class ChangePassword:
-    def __init__(self, user_repo: UserRepository, password_hasher: PasswordHasher) -> None:
+    def __init__(
+        self,
+        user_repo: UserRepository,
+        password_hasher: PasswordHasher,
+        token_service: AuthTokenService,
+    ) -> None:
         self._users = user_repo
         self._hasher = password_hasher
+        self._tokens = token_service
 
     def execute(self, user_id: UUID, data: ChangePasswordInput) -> None:
         user = self._users.get_by_id(user_id)
@@ -198,6 +204,8 @@ class ChangePassword:
         if not self._hasher.verify(data.old_password, current_hash or ""):
             raise InvalidCredentialsError
         self._users.set_password(user_id, self._hasher.hash(data.new_password))
+        # Sessions opened with the old password must not outlive it.
+        self._tokens.revoke_all(user_id)
 
 
 class RequestPasswordReset:
@@ -209,9 +217,7 @@ class RequestPasswordReset:
         # Always acknowledge to avoid leaking which emails are registered.
         user = self._users.get_by_email(Email(data.email))
         if user is not None:
-            token = self._gateway.issue_token(user)
-            # The gateway implementation is responsible for delivering the token.
-            del token
+            self._gateway.send_token(user, self._gateway.issue_token(user))
         return PasswordResetRequestedDTO(acknowledged=True)
 
 
@@ -221,10 +227,12 @@ class ConfirmPasswordReset:
         user_repo: UserRepository,
         password_hasher: PasswordHasher,
         reset_gateway: PasswordResetGateway,
+        token_service: AuthTokenService,
     ) -> None:
         self._users = user_repo
         self._hasher = password_hasher
         self._gateway = reset_gateway
+        self._tokens = token_service
 
     def execute(self, data: ConfirmPasswordResetInput) -> None:
         user_id = self._gateway.resolve_token(data.token)
@@ -233,5 +241,6 @@ class ConfirmPasswordReset:
         user = self._users.get_by_id(user_id)
         if user is None:
             raise PasswordResetTokenInvalidError
-        self._users.set_password(user_id, self._hasher.hash(data.new_password))
         self._gateway.invalidate_token(data.token)
+        self._users.set_password(user_id, self._hasher.hash(data.new_password))
+        self._tokens.revoke_all(user_id)

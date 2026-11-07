@@ -8,6 +8,9 @@ from uuid import UUID
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
+from django.core.mail import send_mail
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.application.ports import (
@@ -19,6 +22,7 @@ from accounts.application.ports import (
     TokenPair,
 )
 from accounts.domain.entities import User
+from accounts.domain.exceptions import InvalidTokenError
 from accounts.infrastructure.orm.models import User as UserORM
 
 
@@ -45,11 +49,19 @@ class SimpleJWTTokenService(AuthTokenService):
             refresh_expires_at=_to_datetime(refresh["exp"]),
         )
 
+    @staticmethod
+    def _parse(refresh_token: str) -> RefreshToken:
+        try:
+            return RefreshToken(refresh_token)
+        except TokenError as exc:  # malformed, expired or already blacklisted
+            raise InvalidTokenError from exc
+
     def refresh(self, refresh_token: str) -> TokenPair:
-        token = RefreshToken(refresh_token)
-        user_id = token["user_id"]
+        token = self._parse(refresh_token)
+        orm = UserORM.objects.filter(pk=token["user_id"], is_active=True).first()
+        if orm is None:
+            raise InvalidTokenError
         token.blacklist()
-        orm = UserORM.objects.get(pk=user_id)
         new_refresh = RefreshToken.for_user(orm)
         return TokenPair(
             access=str(new_refresh.access_token),
@@ -59,7 +71,15 @@ class SimpleJWTTokenService(AuthTokenService):
         )
 
     def revoke(self, refresh_token: str) -> None:
-        RefreshToken(refresh_token).blacklist()
+        self._parse(refresh_token).blacklist()
+
+    def revoke_all(self, user_id: UUID) -> None:
+        outstanding = OutstandingToken.objects.filter(
+            user_id=user_id, blacklistedtoken__isnull=True
+        )
+        BlacklistedToken.objects.bulk_create(
+            [BlacklistedToken(token=t) for t in outstanding], ignore_conflicts=True
+        )
 
 
 class DjangoCachePasswordResetGateway(PasswordResetGateway):
@@ -74,6 +94,18 @@ class DjangoCachePasswordResetGateway(PasswordResetGateway):
         token = secrets.token_urlsafe(32)
         cache.set(self._key(token), str(user.id), timeout=self.timeout_seconds)
         return token
+
+    def send_token(self, user: User, token: str) -> None:
+        send_mail(
+            subject="SpendyHolik: password reset",
+            message=(
+                "Use this code to reset your SpendyHolik password "
+                f"(valid for {self.timeout_seconds // 60} minutes):\n\n{token}\n\n"
+                "If you did not request a reset, ignore this email."
+            ),
+            from_email=None,
+            recipient_list=[user.email.value],
+        )
 
     def resolve_token(self, token: str) -> UUID | None:
         value = cache.get(self._key(token))

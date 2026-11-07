@@ -9,8 +9,14 @@ from uuid import UUID
 
 from dateutil.relativedelta import relativedelta
 
-from finances.application.ports import AccountRepository, TransactionRepository
+from finances.application.ports import (
+    AccountRepository,
+    CategoryRepository,
+    TransactionRepository,
+)
+from finances.application.use_cases import require_category
 from finances.domain.entities import Transaction
+from finances.domain.enums import TransactionType
 from finances.domain.exceptions import AccountNotFoundError
 from recurring.application.dto import (
     CreateRecurringInput,
@@ -26,7 +32,7 @@ from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.clock import Clock
 from shared.domain.money import Money
-from shared.exceptions import DomainError
+from shared.exceptions import DomainError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -61,27 +67,57 @@ def _shift(anchor: date, frequency: RecurringFrequency, steps: int) -> date:
     return anchor + _STEP[frequency] * steps
 
 
-def _occurrences(anchor: date, frequency: RecurringFrequency, today: date) -> list[date]:
+def _first_step(anchor: date, frequency: RecurringFrequency, on_or_after: date) -> int:
+    """Index of the first occurrence of the schedule that falls on/after ``on_or_after``."""
+    steps = 0
+    while _shift(anchor, frequency, steps) < on_or_after:
+        steps += 1
+    return steps
+
+
+def _occurrences(
+    anchor: date, frequency: RecurringFrequency, next_run: date, today: date
+) -> tuple[list[date], date]:
+    """Due dates from ``next_run`` up to ``today`` and the following ``next_run``."""
+    step = _first_step(anchor, frequency, next_run)
     result: list[date] = []
     while len(result) < MAX_OCCURRENCES_PER_RUN:
-        on = _shift(anchor, frequency, len(result))
+        on = _shift(anchor, frequency, step)
         if on > today:
             break
         result.append(on)
-    return result
+        step += 1
+    return result, _shift(anchor, frequency, step)
+
+
+def _validate_template(
+    categories: CategoryRepository,
+    user_id: UUID,
+    tx_type: TransactionType,
+    category_id: UUID | None,
+) -> None:
+    if tx_type is TransactionType.TRANSFER:
+        msg = "Recurring transfers are not supported."
+        raise ValidationError(msg)
+    require_category(categories, user_id, category_id, tx_type)
 
 
 class CreateRecurring:
     def __init__(
-        self, recurring: RecurringTransactionRepository, accounts: AccountRepository
+        self,
+        recurring: RecurringTransactionRepository,
+        accounts: AccountRepository,
+        categories: CategoryRepository,
     ) -> None:
         self._recurring = recurring
         self._accounts = accounts
+        self._categories = categories
 
     def execute(self, user_id: UUID, data: CreateRecurringInput) -> RecurringDTO:
         account = self._accounts.get_by_id(data.account_id, user_id)
         if account is None:
             raise AccountNotFoundError(data.account_id)
+        _validate_template(self._categories, user_id, data.type, data.category_id)
         entity = RecurringTransaction(
             user_id=user_id,
             name=data.name,
@@ -98,10 +134,14 @@ class CreateRecurring:
 
 class UpdateRecurring:
     def __init__(
-        self, recurring: RecurringTransactionRepository, accounts: AccountRepository
+        self,
+        recurring: RecurringTransactionRepository,
+        accounts: AccountRepository,
+        categories: CategoryRepository,
     ) -> None:
         self._recurring = recurring
         self._accounts = accounts
+        self._categories = categories
 
     def execute(
         self, user_id: UUID, recurring_id: UUID, data: UpdateRecurringInput
@@ -118,9 +158,15 @@ class UpdateRecurring:
         account = self._accounts.get_by_id(updated.account_id, user_id)
         if account is None:
             raise AccountNotFoundError(updated.account_id)
+        if "category_id" in data.model_fields_set:
+            require_category(self._categories, user_id, updated.category_id, updated.type)
         # Keep the amount in the (possibly new) account's currency.
         minor = r.amount.to_minor_units() if data.amount_minor is None else data.amount_minor
-        updated = replace(updated, amount=Money.from_minor_units(minor, account.currency.value))
+        changes: dict = {"amount": Money.from_minor_units(minor, account.currency.value)}
+        if {"next_run", "frequency"} & data.model_fields_set:
+            # A rescheduled template starts counting from its new first run.
+            changes["anchor"] = updated.next_run
+        updated = replace(updated, **changes)
         return _dto(self._recurring.update(updated))
 
 
@@ -191,7 +237,9 @@ class RunDueRecurring:
 
     def _run(self, template: RecurringTransaction, today: date) -> tuple[int, int]:
         created = existing = 0
-        occurrences = _occurrences(template.next_run, template.frequency, today)
+        occurrences, next_run = _occurrences(
+            template.anchor, template.frequency, template.next_run, today
+        )
         for on in occurrences:
             if self._transactions.exists_for_source(template.user_id, template.id, on):
                 existing += 1
@@ -208,6 +256,5 @@ class RunDueRecurring:
                 )
             )
             created += 1
-        next_run = _shift(template.next_run, template.frequency, len(occurrences))
         self._recurring.update(replace(template, next_run=next_run))
         return created, existing

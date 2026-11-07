@@ -50,25 +50,31 @@ def generate_csv_export(user_id: str) -> str:
     from shared.infrastructure.gateways import FileSystemObjectStorage
 
     uid = UUID(user_id)
-    transactions, _ = container.list_transactions().execute(uid, ListTransactionsInput(limit=1000))
+    list_transactions = container.list_transactions()
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
         ["id", "type", "amount_minor", "currency", "date", "note", "account_id", "category_id"]
     )
-    for t in transactions:
-        writer.writerow(
-            [
-                str(t.id),
-                t.type.value,
-                t.amount.to_minor_units(),
-                t.amount.currency,
-                t.date.isoformat(),
-                t.note,
-                t.account_id,
-                t.category_id,
-            ]
-        )
+    cursor: str | None = None
+    while True:
+        page = list_transactions.execute(uid, ListTransactionsInput(limit=100, cursor=cursor))
+        for t in page.items:
+            writer.writerow(
+                [
+                    str(t.id),
+                    t.type.value,
+                    t.amount.to_minor_units(),
+                    t.amount.currency,
+                    t.date.isoformat(),
+                    t.note,
+                    t.account_id,
+                    t.category_id,
+                ]
+            )
+        cursor = page.next_cursor
+        if cursor is None:
+            break
     key = f"exports/{uid}/transactions.csv"
     FileSystemObjectStorage().save(key, buf.getvalue().encode("utf-8"), "text/csv")
     return key

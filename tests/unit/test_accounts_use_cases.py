@@ -132,7 +132,7 @@ class TestChangePassword:
     def test_changes_password(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        ChangePassword(users, hasher).execute(
+        ChangePassword(users, hasher, tokens).execute(
             result.user.id,
             ChangePasswordInput(old_password="password123", new_password="newpass456"),
         )
@@ -145,7 +145,7 @@ class TestChangePassword:
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
         with pytest.raises(InvalidCredentialsError):
-            ChangePassword(users, hasher).execute(
+            ChangePassword(users, hasher, tokens).execute(
                 result.user.id, ChangePasswordInput(old_password="bad", new_password="newpass456")
             )
 
@@ -160,7 +160,7 @@ class TestPasswordReset:
         )
         assert requested.acknowledged is True
         token = next(iter(gateway._tokens))
-        ConfirmPasswordReset(users, hasher, gateway).execute(
+        ConfirmPasswordReset(users, hasher, gateway, tokens).execute(
             ConfirmPasswordResetInput(token=token, new_password="newpass456")
         )
         LoginUser(users, hasher, tokens).execute(
@@ -172,7 +172,7 @@ class TestPasswordReset:
         _register(users, profiles, hasher, tokens)
         gateway = FakePasswordResetGateway()
         with pytest.raises(PasswordResetTokenInvalidError):
-            ConfirmPasswordReset(users, hasher, gateway).execute(
+            ConfirmPasswordReset(users, hasher, gateway, tokens).execute(
                 ConfirmPasswordResetInput(token="bogus", new_password="newpass456")
             )
 

@@ -35,6 +35,8 @@ class RecurringTransaction(models.Model):
     frequency = models.CharField(max_length=20, choices=_choices(RecurringFrequency))
     next_run = models.DateField(db_index=True)
     is_active = models.BooleanField(default=True)
+    # Schedule origin (see the domain entity); NULL means "same as next_run".
+    anchor = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ("next_run",)

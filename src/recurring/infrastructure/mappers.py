@@ -21,6 +21,7 @@ def recurring_to_domain(orm: RecurringORM) -> RecurringTransaction:
         frequency=RecurringFrequency(orm.frequency),
         next_run=orm.next_run,
         is_active=orm.is_active,
+        anchor=orm.anchor,
     )
 
 
@@ -37,4 +38,5 @@ def recurring_to_orm(r: RecurringTransaction) -> RecurringORM:
         frequency=r.frequency.value,
         next_run=r.next_run,
         is_active=r.is_active,
+        anchor=r.anchor,
     )

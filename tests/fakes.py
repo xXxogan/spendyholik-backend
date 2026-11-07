@@ -121,6 +121,7 @@ class InMemoryProfileRepository(ProfileRepository):
 class FakeAuthTokenService(AuthTokenService):
     def __init__(self) -> None:
         self._revoked: set[str] = set()
+        self.revoked_users: set[UUID] = set()
 
     def issue(self, user: User) -> TokenPair:
         now = datetime.now(UTC)
@@ -147,15 +148,22 @@ class FakeAuthTokenService(AuthTokenService):
     def revoke(self, refresh_token: str) -> None:
         self._revoked.add(refresh_token)
 
+    def revoke_all(self, user_id: UUID) -> None:
+        self.revoked_users.add(user_id)
+
 
 class FakePasswordResetGateway(PasswordResetGateway):
     def __init__(self) -> None:
         self._tokens: dict[str, UUID] = {}
+        self.sent: list[tuple[UUID, str]] = []
 
     def issue_token(self, user: User) -> str:
         token = secrets.token_urlsafe(16)
         self._tokens[token] = user.id
         return token
+
+    def send_token(self, user: User, token: str) -> None:
+        self.sent.append((user.id, token))
 
     def resolve_token(self, token: str) -> UUID | None:
         return self._tokens.get(token)
@@ -237,6 +245,9 @@ class InMemoryCategoryRepository(CategoryRepository):
         return False
 
     def has_transactions(self, category_id: UUID, user_id: UUID) -> bool:
+        return False  # overridden by tests that need it
+
+    def has_budgets(self, category_id: UUID, user_id: UUID) -> bool:
         return False  # overridden by tests that need it
 
 

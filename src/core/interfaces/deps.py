@@ -126,7 +126,10 @@ class Container:
 
     def confirm_password_reset(self) -> ConfirmPasswordReset:
         return ConfirmPasswordReset(
-            DjangoUserRepository(), DjangoPasswordHasher(), DjangoCachePasswordResetGateway()
+            DjangoUserRepository(),
+            DjangoPasswordHasher(),
+            DjangoCachePasswordResetGateway(),
+            SimpleJWTTokenService(),
         )
 
     def get_profile(self) -> GetProfile:
@@ -136,7 +139,9 @@ class Container:
         return UpdateProfile(DjangoProfileRepository())
 
     def change_password(self) -> ChangePassword:
-        return ChangePassword(DjangoUserRepository(), DjangoPasswordHasher())
+        return ChangePassword(
+            DjangoUserRepository(), DjangoPasswordHasher(), SimpleJWTTokenService()
+        )
 
     # --- finances ---
     def create_account(self) -> CreateAccount:
@@ -233,10 +238,18 @@ class Container:
 
     # --- recurring ---
     def create_recurring(self) -> CreateRecurring:
-        return CreateRecurring(DjangoRecurringTransactionRepository(), DjangoAccountRepository())
+        return CreateRecurring(
+            DjangoRecurringTransactionRepository(),
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+        )
 
     def update_recurring(self) -> UpdateRecurring:
-        return UpdateRecurring(DjangoRecurringTransactionRepository(), DjangoAccountRepository())
+        return UpdateRecurring(
+            DjangoRecurringTransactionRepository(),
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+        )
 
     def toggle_recurring(self) -> ToggleRecurring:
         return ToggleRecurring(DjangoRecurringTransactionRepository())

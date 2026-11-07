@@ -57,6 +57,9 @@ class CategoryRepository(ABC):
     @abstractmethod
     def has_transactions(self, category_id: UUID, user_id: UUID) -> bool: ...
 
+    @abstractmethod
+    def has_budgets(self, category_id: UUID, user_id: UUID) -> bool: ...
+
 
 class TransactionRepository(ABC):
     @abstractmethod

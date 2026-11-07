@@ -73,12 +73,19 @@ class AuthTokenService(ABC):
     @abstractmethod
     def revoke(self, refresh_token: str) -> None: ...
 
+    @abstractmethod
+    def revoke_all(self, user_id: UUID) -> None:
+        """Invalidate every outstanding refresh token of the user."""
+
 
 class PasswordResetGateway(ABC):
     """Generates one-time reset tokens and delivers them (usually by email)."""
 
     @abstractmethod
     def issue_token(self, user: User) -> str: ...
+
+    @abstractmethod
+    def send_token(self, user: User, token: str) -> None: ...
 
     @abstractmethod
     def resolve_token(self, token: str) -> UUID | None: ...

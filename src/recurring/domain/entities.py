@@ -23,6 +23,9 @@ class RecurringTransaction:
     next_run: date
     category_id: UUID | None = None
     is_active: bool = True
+    #: Date the schedule is counted from; occurrences are ``anchor + n * step``,
+    #: so a template on the 31st returns to the 31st after a short month.
+    anchor: date | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
@@ -32,3 +35,5 @@ class RecurringTransaction:
         if self.amount.is_zero():
             msg = "Recurring transaction amount must be non-zero."
             raise ValidationError(msg)
+        if self.anchor is None:
+            object.__setattr__(self, "anchor", self.next_run)
