@@ -205,7 +205,7 @@ class TransactionOut(BaseModel):
     id: str
     type: TransactionType
     amount: MoneyOut
-    title: str
+    title: str = Field(description="Given name, or the category (account for a transfer) name.")
     subtitle: str
     category: CategoryRefOut | None
     account: AccountRefOut
@@ -391,11 +391,13 @@ DATE_RANGE = [
     _query("date_to", OpenApiTypes.DATE, "Last day, inclusive."),
 ]
 TRANSACTION_FILTERS = [
-    _query("account_id", OpenApiTypes.UUID, "Only this account (as the source)."),
+    _query(
+        "account_id", OpenApiTypes.UUID, "This account as the source or a transfer's destination."
+    ),
     _query("category_id", OpenApiTypes.UUID, "This category and all its subcategories."),
     _query("type", OpenApiTypes.STR, "Transaction type.", enum=["expense", "income", "transfer"]),
     *DATE_RANGE,
-    _query("search", OpenApiTypes.STR, "Substring of the note."),
+    _query("search", OpenApiTypes.STR, "Substring of the title or the note."),
     _query("cursor", OpenApiTypes.STR, "`next_cursor` of the previous page."),
     _query("limit", OpenApiTypes.INT, "Page size, 1–100 (default 20)."),
 ]

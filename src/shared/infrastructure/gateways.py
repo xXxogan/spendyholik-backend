@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import date
-from decimal import Decimal
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from uuid import UUID
 
 from django.conf import settings
 from django.core.mail import send_mail
 
-from shared.application.ports import EmailGateway, ExchangeRateProvider, ObjectStorage, PushGateway
+from shared.application.ports import (
+    EmailGateway,
+    ExchangeRateProvider,
+    ObjectStorage,
+    PushGateway,
+    RatesSnapshot,
+)
 from shared.domain.currency_code import CurrencyCode
+from shared.exceptions import DomainError, ExchangeRatesUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +59,43 @@ class FileSystemObjectStorage(ObjectStorage):
             path.unlink()
 
 
-class StubExchangeRateProvider(ExchangeRateProvider):
-    """Returns pre-configured rates; swap for an external provider in production."""
+class OpenErApiExchangeRateProvider(ExchangeRateProvider):
+    """Daily rates from ExchangeRate-API's open endpoint (no key; ~160 currencies, RUB too).
 
-    def __init__(self, rates: dict[tuple[str, str], Decimal] | None = None) -> None:
-        self._rates = rates or {}
+    ``EXCHANGE_RATES_URL`` holds the endpoint with a ``{base}`` placeholder.
+    The open endpoint asks for attribution: "Rates By Exchange Rate API".
+    """
 
-    def get_rate(
-        self, base: CurrencyCode, target: CurrencyCode, on: date | None = None
-    ) -> Decimal | None:
-        return self._rates.get((base.value, target.value))
+    def __init__(self, url: str | None = None, timeout: float = 10.0) -> None:
+        self._url = url or settings.EXCHANGE_RATES_URL
+        self._timeout = timeout
+
+    def latest(self, base: CurrencyCode) -> RatesSnapshot:
+        request = Request(
+            self._url.format(base=base.value), headers={"User-Agent": "spendyholik-backend"}
+        )
+        try:
+            with urlopen(request, timeout=self._timeout) as response:
+                payload = json.loads(response.read())
+        except (URLError, TimeoutError, ValueError) as exc:
+            raise ExchangeRatesUnavailableError(str(exc)) from exc
+        return parse_open_er_api(payload, base.value)
+
+
+def parse_open_er_api(payload: dict, base: str) -> RatesSnapshot:
+    """Turn an open.er-api.com ``/latest`` answer into a snapshot (bad entries skipped)."""
+    if payload.get("result") != "success" or payload.get("base_code") != base:
+        msg = f"Unexpected exchange-rate answer: {payload.get('result')!r}"
+        raise ExchangeRatesUnavailableError(msg)
+    rates: dict[str, Decimal] = {}
+    for code, value in (payload.get("rates") or {}).items():
+        try:
+            rate = Decimal(str(value))
+            currency = CurrencyCode(code).value
+        except InvalidOperation, DomainError:  # skip junk entries
+            continue
+        if rate > 0 and currency != base:
+            rates[currency] = rate
+    updated = payload.get("time_last_update_unix")
+    day = datetime.fromtimestamp(updated, tz=UTC).date() if updated else datetime.now(UTC).date()
+    return RatesSnapshot(base=base, date=day, rates=rates)

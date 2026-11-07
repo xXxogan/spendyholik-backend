@@ -72,6 +72,8 @@ class CreateTransactionInput(BaseModel):
     category_id: UUID | None = None
     time: _time | None = None
     note: str = Field(default="", max_length=2000)
+    #: Optional name; empty → the category name (the account for a transfer).
+    title: str = Field(default="", max_length=120)
     transfer_to_account_id: UUID | None = None
 
 
@@ -84,6 +86,7 @@ class UpdateTransactionInput(BaseModel):
     date: _date | None = None
     time: _time | None = None
     note: str | None = None
+    title: str | None = Field(default=None, max_length=120)
     transfer_to_account_id: UUID | None = None
 
 
@@ -197,6 +200,7 @@ class TransactionDTO:
     date: _date
     time: _time | None
     note: str
+    title: str
     receipt_id: UUID | None
     transfer_to_account_id: UUID | None
     labels: TransactionLabels | None = None

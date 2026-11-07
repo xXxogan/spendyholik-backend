@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.conf import settings
+
 from accounts.application.use_cases import (
     ChangePassword,
     ConfirmPasswordReset,
@@ -59,6 +61,7 @@ from finances.application.use_cases import (
     ListBudgets,
     ListCategories,
     ListTransactions,
+    RefreshExchangeRates,
     UnarchiveAccount,
     UpdateAccount,
     UpdateBudget,
@@ -95,6 +98,7 @@ from recurring.application.use_cases import (
 )
 from recurring.infrastructure.repositories import DjangoRecurringTransactionRepository
 from shared.domain.clock import SystemClock
+from shared.infrastructure.gateways import OpenErApiExchangeRateProvider
 from shared.infrastructure.uow import DjangoUnitOfWork
 
 
@@ -214,6 +218,7 @@ class Container:
             DjangoCategoryRepository(),
             DjangoExchangeRateRepository(),
             SystemClock(),
+            DjangoProfileRepository(),
         )
 
     def create_budget(self) -> CreateBudget:
@@ -226,7 +231,17 @@ class Container:
 
     def update_budget(self) -> UpdateBudget:
         return UpdateBudget(
-            DjangoBudgetRepository(), DjangoCategoryRepository(), self._budget_reporter()
+            DjangoBudgetRepository(),
+            DjangoCategoryRepository(),
+            self._budget_reporter(),
+            DjangoProfileRepository(),
+        )
+
+    def refresh_exchange_rates(self) -> RefreshExchangeRates:
+        return RefreshExchangeRates(
+            OpenErApiExchangeRateProvider(),
+            DjangoExchangeRateRepository(),
+            settings.EXCHANGE_RATES_BASE,
         )
 
     def list_budgets(self) -> ListBudgets:

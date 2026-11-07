@@ -103,7 +103,8 @@ def transaction_to_view(dto) -> dict[str, Any]:
     account_name = labels.account_name if labels else None
     category_name = labels.category_name if labels else None
     is_transfer = dto.type.value == "transfer"
-    title = (account_name or "Перевод") if is_transfer else (category_name or "")
+    fallback = (account_name or "Перевод") if is_transfer else (category_name or "")
+    title = dto.title or fallback
     return {
         "id": str(dto.id),
         "type": dto.type.value,

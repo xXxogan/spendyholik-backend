@@ -216,6 +216,11 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # ---------------------------------------------------------------------------
 # Email / gateways
 # ---------------------------------------------------------------------------
+EXCHANGE_RATES_URL = env("EXCHANGE_RATES_URL", default="https://open.er-api.com/v6/latest/{base}")
+#: Currency the rates are fetched against; conversions between two other
+#: currencies go through it.
+EXCHANGE_RATES_BASE = env("EXCHANGE_RATES_BASE", default="USD")
+
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 EMAIL_HOST = env("EMAIL_HOST", default="localhost")
 EMAIL_PORT = env.int("EMAIL_PORT", default=25)

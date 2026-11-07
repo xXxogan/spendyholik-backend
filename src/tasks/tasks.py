@@ -11,6 +11,7 @@ from celery import shared_task
 
 from core.interfaces.deps import container
 from finances.application.dto import ListTransactionsInput
+from shared.exceptions import ExchangeRatesUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +22,14 @@ def run_due_recurring(self) -> dict:
     return {"generated": result.generated, "skipped": result.skipped}
 
 
-@shared_task(name="spendyholik.refresh_exchange_rates")
+@shared_task(
+    name="spendyholik.refresh_exchange_rates",
+    autoretry_for=(ExchangeRatesUnavailableError,),
+    retry_backoff=60,
+    max_retries=5,
+)
 def refresh_exchange_rates() -> dict:
-    # Uses the exchange-rate provider; swaps to an external API in production.
-    from shared.infrastructure.gateways import StubExchangeRateProvider
-
-    provider = StubExchangeRateProvider()
-    # The reference implementation relies on a configured provider; no-op here.
-    _ = provider
-    return {"updated": 0}
+    return {"updated": container.refresh_exchange_rates().execute()}
 
 
 @shared_task(name="spendyholik.send_weekly_report")

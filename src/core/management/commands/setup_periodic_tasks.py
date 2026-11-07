@@ -8,7 +8,8 @@ from django_celery_beat.models import CrontabSchedule, PeriodicTask
 # Crontab fields: minute hour day-of-month month day-of-week (UTC).
 SCHEDULES = [
     ("spendyholik.run_due_recurring", "5 0 * * *"),
-    ("spendyholik.refresh_exchange_rates", "0 3 * * *"),
+    # The provider updates once a day; every 6 hours keeps a missed run short.
+    ("spendyholik.refresh_exchange_rates", "20 */6 * * *"),
     ("spendyholik.send_weekly_report", "0 9 * * 0"),
     ("spendyholik.notify_upcoming_recurring", "0 8 * * *"),
 ]

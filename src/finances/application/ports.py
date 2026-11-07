@@ -102,7 +102,9 @@ class TransactionRepository(ABC):
     ) -> tuple[list[tuple[Transaction, TransactionLabels]], str | None]:
         """A page ordered newest first (date, then creation) and the next cursor.
 
-        ``category_id`` matches the category and all of its subcategories.
+        ``account_id`` matches the source account and the destination of a
+        transfer; ``category_id`` matches the category and all of its
+        subcategories; ``search`` looks in the title and the note.
         """
 
     @abstractmethod
@@ -209,3 +211,7 @@ class ExchangeRateRepository(ABC):
 
     @abstractmethod
     def get_latest(self, base: CurrencyCode, target: CurrencyCode) -> ExchangeRate | None: ...
+
+    @abstractmethod
+    def save_many(self, rates: list[ExchangeRate]) -> int:
+        """Insert or replace rates (one per base, target and date); returns how many."""

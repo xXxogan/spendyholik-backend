@@ -37,6 +37,10 @@ spec:
           command:
             - sh
             - -c
-            - python manage.py migrate --noinput && python manage.py setup_periodic_tasks
+            # Rates are fetched right away so totals do not wait for the next beat run;
+            # an unreachable provider must not fail the deploy.
+            - >-
+              python manage.py migrate --noinput && python manage.py setup_periodic_tasks
+              && (python manage.py refresh_exchange_rates || echo "exchange rates: will retry on schedule")
           envFrom:
             {{- include "spendyholik-backend.envFrom" . | nindent 12 }}

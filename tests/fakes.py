@@ -320,7 +320,7 @@ class InMemoryTransactionRepository(TransactionRepository):
     ):
         items = [t for t in self._by_id.values() if t.user_id == user_id]
         if account_id is not None:
-            items = [t for t in items if t.account_id == account_id]
+            items = [t for t in items if account_id in (t.account_id, t.transfer_to_account_id)]
         if category_id is not None:
             ids = {category_id}
             if self._categories is not None:
@@ -335,7 +335,8 @@ class InMemoryTransactionRepository(TransactionRepository):
         if date_to is not None:
             items = [t for t in items if t.date <= date_to]
         if search is not None:
-            items = [t for t in items if search.lower() in t.note.lower()]
+            needle = search.lower()
+            items = [t for t in items if needle in t.note.lower() or needle in t.title.lower()]
         items.sort(key=lambda t: (t.date, str(t.id)), reverse=True)
         if cursor is not None:
             items = [t for t in items if f"{t.date}_{t.id}" < cursor]
@@ -493,18 +494,31 @@ class InMemoryExchangeRateRepository(ExchangeRateRepository):
         return rate
 
     def get_latest(self, base: CurrencyCode, target: CurrencyCode) -> ExchangeRate | None:
-        for rate in reversed(self._rates):
-            if rate.base == base and rate.target == target:
-                return rate
-        return None
+        found = [r for r in self._rates if r.base == base and r.target == target]
+        return max(found, key=lambda r: r.date) if found else None
+
+    def save_many(self, rates: list[ExchangeRate]) -> int:
+        for rate in rates:
+            self._rates = [
+                r
+                for r in self._rates
+                if (r.base, r.target, r.date) != (rate.base, rate.target, rate.date)
+            ]
+            self._rates.append(rate)
+        return len(rates)
 
 
 class StubExchangeRateProvider(ExchangeRateProvider):
-    def __init__(self, rates: dict[tuple[str, str], object] | None = None) -> None:
-        self._rates = rates or {}
+    """Answers with a fixed snapshot, or raises ``error`` when given one."""
 
-    def get_rate(self, base, target, on=None):
-        return self._rates.get((base.value, target.value))
+    def __init__(self, snapshot=None, error: Exception | None = None) -> None:
+        self._snapshot = snapshot
+        self._error = error
+
+    def latest(self, base):
+        if self._error is not None:
+            raise self._error
+        return self._snapshot
 
 
 class FakeClock:

@@ -7,6 +7,7 @@ depends only on these abstractions.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from types import TracebackType
@@ -59,9 +60,16 @@ class ObjectStorage(ABC):
     def delete(self, key: str) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class RatesSnapshot:
+    """Rates of every known currency against ``base`` (units of target per 1 base)."""
+
+    base: str
+    date: date
+    rates: dict[str, Decimal]
+
+
 class ExchangeRateProvider(ABC):
     @abstractmethod
-    def get_rate(
-        self, base: CurrencyCode, target: CurrencyCode, on: date | None = None
-    ) -> Decimal | None:
-        """Return the exchange rate (target per unit of base), or ``None``."""
+    def latest(self, base: CurrencyCode) -> RatesSnapshot:
+        """Fetch the latest rates against ``base``; raises ``ExchangeRatesUnavailableError``."""

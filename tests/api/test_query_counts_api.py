@@ -59,8 +59,8 @@ def _seed(client, n):
         ("/api/v1/goals/", 3),
         # auth, accounts, 4 balance sources
         ("/api/v1/accounts/", 6),
-        # auth, budgets, categories, one aggregate per distinct period
-        ("/api/v1/budgets/", 4),
+        # auth, budgets, profile, categories, one aggregate per distinct period
+        ("/api/v1/budgets/", 5),
         ("/api/v1/categories/", 3),
         ("/api/v1/recurring/", 4),
     ],

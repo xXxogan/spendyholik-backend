@@ -77,6 +77,14 @@ class ConflictError(BusinessRuleError):
     default_detail = "Conflicting state."
 
 
+class ExchangeRatesUnavailableError(DomainError):
+    """The exchange-rate provider could not be reached or gave an unusable answer."""
+
+    code = "exchange_rates_unavailable"
+    http_status = 503
+    default_detail = "Exchange rates are unavailable."
+
+
 class CurrencyMismatchError(ValidationError):
     code = "currency_mismatch"
     default_detail = "Currency mismatch."

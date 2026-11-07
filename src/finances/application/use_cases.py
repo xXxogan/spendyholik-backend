@@ -10,7 +10,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from accounts.application.ports import ProfileRepository
-from finances.application.currency import CurrencyConverter
+from finances.application.currency import CurrencyConverter, base_currency_for
 from finances.application.dto import (
     AccountDTO,
     AccountRefDTO,
@@ -40,7 +40,7 @@ from finances.application.ports import (
     ExchangeRateRepository,
     TransactionRepository,
 )
-from finances.domain.entities import Account, Budget, Category, Transaction
+from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
 from finances.domain.enums import BudgetPeriod, TransactionType
 from finances.domain.exceptions import (
     AccountArchivedError,
@@ -52,9 +52,11 @@ from finances.domain.exceptions import (
     CategoryNotFoundError,
     InsufficientFundsError,
     TransactionNotFoundError,
+    TransferCurrencyMismatchError,
 )
 from finances.domain.value_objects import CategoryColor
 from shared.application.patch import apply_patch
+from shared.application.ports import ExchangeRateProvider
 from shared.domain.clock import Clock
 from shared.domain.currency_code import CurrencyCode
 from shared.domain.money import DEFAULT_CURRENCY, Money
@@ -130,6 +132,7 @@ def _transaction_dto(t: Transaction, labels: TransactionLabels | None = None) ->
         date=t.date,
         time=t.time,
         note=t.note,
+        title=t.title,
         receipt_id=t.receipt_id,
         transfer_to_account_id=t.transfer_to_account_id,
         labels=labels,
@@ -404,8 +407,7 @@ class _TransactionGuard:
         if tx_type is TransactionType.TRANSFER and transfer_to_account_id not in (None, account_id):
             dest = self._require_account(user_id, transfer_to_account_id)
             if dest.currency != account.currency:
-                msg = "Cross-currency transfers are not supported yet."
-                raise ValidationError(msg)
+                raise TransferCurrencyMismatchError
         # A missing or identical destination is rejected by the Transaction entity.
         require_category(self._categories, user_id, category_id, tx_type)
         return account
@@ -438,6 +440,7 @@ class CreateTransaction:
             date=data.date,
             time=data.time,
             note=data.note,
+            title=data.title.strip(),
             transfer_to_account_id=data.transfer_to_account_id,
         )
         return _transaction_dto(self._transactions.add(transaction))
@@ -474,7 +477,10 @@ class UpdateTransaction:
         draft = apply_patch(
             tx,
             data,
-            fields={"amount_minor": ("amount", lambda _: tx.amount)},
+            fields={
+                "amount_minor": ("amount", lambda _: tx.amount),
+                "title": ("title", str.strip),
+            },
             nullable={"category_id", "time", "transfer_to_account_id"},
         )
         account = self._guard.validate(
@@ -551,8 +557,10 @@ def merge_totals(totals: Iterable[CurrencyTotals | None]) -> CurrencyTotals:
 class BudgetReporter:
     """Renders budgets with their current period and the spending in it.
 
-    Spending counts expenses of the budget's category and all its subcategories,
-    converted into the budget's currency; one aggregate query per distinct period.
+    Spending counts expenses of the budget's category and all its subcategories;
+    one aggregate query per distinct period. The limit and the spending are in
+    the profile's base currency, or in the budget's own one when no rate
+    converts it.
     """
 
     def __init__(
@@ -561,11 +569,13 @@ class BudgetReporter:
         categories: CategoryRepository,
         rates: ExchangeRateRepository,
         clock: Clock,
+        profiles: ProfileRepository | None = None,
     ) -> None:
         self._transactions = transactions
         self._categories = categories
         self._rates = rates
         self._clock = clock
+        self._profiles = profiles
 
     def report(self, user_id: UUID, budgets: list[Budget]) -> list[BudgetDTO]:
         if not budgets:
@@ -580,10 +590,15 @@ class BudgetReporter:
             )
             for window in set(bounds.values())
         }
+        base = base_currency_for(self._profiles, user_id) if self._profiles else None
         converters: dict[str, CurrencyConverter] = {}
         result = []
         for budget in budgets:
             currency = budget.amount.currency
+            if base is not None:
+                to_base = converters.setdefault(base, CurrencyConverter(self._rates, base))
+                if to_base.can_convert(currency):
+                    currency = base
             fx = converters.setdefault(currency, CurrencyConverter(self._rates, currency))
             window = spent_by_window[bounds[budget.id]]
             ids = descendant_ids(categories, budget.category_id)
@@ -596,7 +611,7 @@ class BudgetReporter:
                     else CategoryRefDTO(
                         id=budget.category_id, name="", icon="tag", color="default"
                     ),
-                    amount=budget.amount,
+                    amount=fx.total({budget.amount.currency: budget.amount}),
                     period=budget.period,
                     start_date=budget.start_date,
                     end_date=budget.end_date,
@@ -670,16 +685,23 @@ class UpdateBudget:
         budgets: BudgetRepository,
         categories: CategoryRepository,
         reporter: BudgetReporter,
+        profiles: ProfileRepository | None = None,
     ) -> None:
         self._budgets = budgets
         self._categories = categories
         self._reporter = reporter
+        self._profiles = profiles
 
     def execute(self, user_id: UUID, budget_id: UUID, data: UpdateBudgetInput) -> BudgetDTO:
         budget = self._budgets.get_by_id(budget_id, user_id)
         if budget is None:
             raise BudgetNotFoundError(budget_id)
-        currency = budget.amount.currency
+        # A new limit is entered in the base currency, like a new budget.
+        currency = (
+            base_currency_for(self._profiles, user_id)
+            if self._profiles is not None
+            else budget.amount.currency
+        )
         updated = apply_patch(
             budget,
             data,
@@ -718,3 +740,27 @@ class DeleteBudget:
     def execute(self, user_id: UUID, budget_id: UUID) -> None:
         if not self._budgets.delete(budget_id, user_id):
             raise BudgetNotFoundError(budget_id)
+
+
+# ---------------------------------------------------------------------------
+# Exchange rates
+# ---------------------------------------------------------------------------
+class RefreshExchangeRates:
+    """Store the provider's latest rates against ``base`` (idempotent per day)."""
+
+    def __init__(
+        self, provider: ExchangeRateProvider, rates: ExchangeRateRepository, base: str
+    ) -> None:
+        self._provider = provider
+        self._rates = rates
+        self._base = base
+
+    def execute(self) -> int:
+        snapshot = self._provider.latest(CurrencyCode(self._base))
+        base = CurrencyCode(snapshot.base)
+        return self._rates.save_many(
+            [
+                ExchangeRate(base=base, target=CurrencyCode(code), rate=rate, date=snapshot.date)
+                for code, rate in sorted(snapshot.rates.items())
+            ]
+        )

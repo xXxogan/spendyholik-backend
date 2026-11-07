@@ -123,6 +123,7 @@ _TRANSACTION_UPDATE_FIELDS = (
     "date",
     "time",
     "note",
+    "title",
     "receipt_id",
     "transfer_to_account_id",
     "recurring_source_id",
@@ -264,7 +265,9 @@ class DjangoTransactionRepository(TransactionRepository):
     ):
         qs = TransactionORM.objects.filter(user_id=user_id).select_related(*_LABEL_RELATIONS)
         if account_id is not None:
-            qs = qs.filter(account_id=account_id)
+            qs = qs.filter(
+                models.Q(account_id=account_id) | models.Q(transfer_to_account_id=account_id)
+            )
         if category_id is not None:
             qs = qs.filter(category_id__in=category_with_descendants(user_id, category_id))
         if type is not None:
@@ -274,7 +277,7 @@ class DjangoTransactionRepository(TransactionRepository):
         if date_to is not None:
             qs = qs.filter(date__lte=date_to)
         if search is not None:
-            qs = qs.filter(note__icontains=search)
+            qs = qs.filter(models.Q(note__icontains=search) | models.Q(title__icontains=search))
         # Newest first by transaction date, so back-dated entries land in place.
         qs = qs.order_by("-date", "-created_at", "-id")
         if cursor is not None:
@@ -382,3 +385,12 @@ class DjangoExchangeRateRepository(ExchangeRateRepository):
     def get_latest(self, base: CurrencyCode, target: CurrencyCode) -> ExchangeRate | None:
         orm = ExchangeRateORM.objects.filter(base=base.value, target=target.value).first()
         return exchange_rate_to_domain(orm) if orm else None
+
+    def save_many(self, rates: list[ExchangeRate]) -> int:
+        ExchangeRateORM.objects.bulk_create(
+            [exchange_rate_to_orm(r) for r in rates],
+            update_conflicts=True,
+            unique_fields=["base", "target", "date"],
+            update_fields=["rate"],
+        )
+        return len(rates)

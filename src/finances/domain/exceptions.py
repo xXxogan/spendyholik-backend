@@ -32,6 +32,12 @@ class InsufficientFundsError(BusinessRuleError):
     field = "amount_minor"
 
 
+class TransferCurrencyMismatchError(ValidationError):
+    code = "currency_mismatch"
+    default_detail = "A transfer needs two accounts in the same currency."
+    field = "transfer_to_account_id"
+
+
 class BudgetNotFoundError(EntityNotFoundError):
     code = "budget_not_found"
 

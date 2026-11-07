@@ -85,6 +85,8 @@ class Transaction:
     category_id: UUID | None = None
     time: time | None = None
     note: str = ""
+    #: Name the user gave; empty means "render the category (or account) name".
+    title: str = ""
     receipt_id: UUID | None = None
     transfer_to_account_id: UUID | None = None
     recurring_source_id: UUID | None = None

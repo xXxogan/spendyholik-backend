@@ -311,6 +311,7 @@ class RunDueRecurring:
                     type=template.type,
                     amount=template.amount,
                     date=on,
+                    title=template.name,
                     recurring_source_id=template.id,
                 )
             )

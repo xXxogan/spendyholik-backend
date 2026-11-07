@@ -78,6 +78,7 @@ class Transaction(models.Model):
     date = models.DateField(db_index=True)
     time = models.TimeField(null=True, blank=True)
     note = models.TextField(max_length=2000, blank=True, default="")
+    title = models.CharField(max_length=120, blank=True, default="")
     receipt_id = models.UUIDField(null=True, blank=True)
     transfer_to_account = models.ForeignKey(
         Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="incoming_transfers"
