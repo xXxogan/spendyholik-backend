@@ -40,3 +40,10 @@ class GoalContributionRepository(ABC):
     @abstractmethod
     def sums_for_goals(self, goal_ids: list[UUID]) -> dict[UUID, Money]:
         """Contribution totals in one query; goals without contributions are omitted."""
+
+
+class GoalObserver(ABC):
+    """Told after money is added to a goal; must not raise."""
+
+    @abstractmethod
+    def progressed(self, user_id: UUID, goal: Goal, before: Money, after: Money) -> None: ...

@@ -15,6 +15,7 @@ def _dto(n) -> NotificationDTO:
         type=n.type,
         subject=n.subject,
         amount_minor=n.amount_minor,
+        currency=n.currency,
         percent=n.percent,
         title=n.title,
         body=n.body,

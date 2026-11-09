@@ -22,6 +22,11 @@ class Debt:
     is_closed: bool = False
     note: str = ""
     created_at: datetime | None = None
+    #: Account the borrowed money came into (``i_owe``) or the lent money left
+    #: (``owed_to_me``); ``None`` — the opening does not touch any account.
+    account_id: UUID | None = None
+    #: Day of the opening movement.
+    opened_on: date | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:

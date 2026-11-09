@@ -8,7 +8,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from finances.application.dto import TransactionLabels
+from finances.application.dto import FeedPageDTO, TransactionLabels
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
 from finances.domain.enums import Granularity, TransactionType
 from shared.domain.currency_code import CurrencyCode
@@ -203,6 +203,35 @@ class BalanceReader(ABC):
         self, user_id: UUID, account_id: UUID, date_from: date, date_to: date
     ) -> dict[date, Decimal]:
         """Net movement of one account per day within ``[date_from, date_to]``."""
+
+
+class TransactionObserver(ABC):
+    """Told after a transaction is created, changed or deleted (e.g. to notify).
+
+    Implementations must not raise: a failed side effect never undoes the write.
+    """
+
+    @abstractmethod
+    def changed(
+        self, user_id: UUID, before: Transaction | None, after: Transaction | None
+    ) -> None: ...
+
+
+class FeedReader(ABC):
+    """Transactions together with the goal and debt events that move balances."""
+
+    @abstractmethod
+    def page(
+        self,
+        user_id: UUID,
+        *,
+        account_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> FeedPageDTO:
+        """Newest first by (date, creation, id), with one shared cursor."""
 
 
 class ExchangeRateRepository(ABC):

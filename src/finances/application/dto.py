@@ -103,6 +103,16 @@ class ListTransactionsInput(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)
 
 
+class ListFeedInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    account_id: UUID | None = None
+    date_from: _date | None = None
+    date_to: _date | None = None
+    cursor: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+
+
 class CreateBudgetInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -204,6 +214,31 @@ class TransactionDTO:
     receipt_id: UUID | None
     transfer_to_account_id: UUID | None
     labels: TransactionLabels | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FeedItemDTO:
+    """One line of an account feed: a transaction or a goal/debt event.
+
+    ``effect`` is how it moves the account: ``in``, ``out`` or ``transfer``
+    (a transfer seen without an account filter).
+    """
+
+    kind: str  # transaction | debt_opening | debt_payment | goal_contribution
+    id: UUID
+    date: _date
+    amount: Money
+    effect: str
+    account: AccountRefDTO | None
+    transaction: TransactionDTO | None = None
+    debt: dict | None = None  # {id, person_name, direction}
+    goal: dict | None = None  # {id, name}
+
+
+@dataclass(frozen=True, slots=True)
+class FeedPageDTO:
+    items: list[FeedItemDTO]
+    next_cursor: str | None
 
 
 @dataclass(frozen=True, slots=True)

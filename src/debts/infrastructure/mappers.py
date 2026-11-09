@@ -21,6 +21,8 @@ def debt_to_domain(orm: DebtORM) -> Debt:
         is_closed=orm.is_closed,
         note=orm.note,
         created_at=orm.created_at,
+        account_id=orm.account_id,
+        opened_on=orm.opened_on,
     )
 
 
@@ -36,6 +38,8 @@ def debt_to_orm(d: Debt) -> DebtORM:
         due_date=d.due_date,
         is_closed=d.is_closed,
         note=d.note,
+        account_id=d.account_id,
+        opened_on=d.opened_on,
         **({"created_at": d.created_at} if d.created_at else {}),
     )
 

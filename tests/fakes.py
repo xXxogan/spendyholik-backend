@@ -8,8 +8,10 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
+from accounts.application.codes import VerificationCodes
 from accounts.application.ports import (
     AuthTokenService,
+    CodeSender,
     PasswordHasher,
     PasswordResetGateway,
     ProfileRepository,
@@ -17,6 +19,7 @@ from accounts.application.ports import (
     SocialIdentityProvider,
     TokenPair,
     UserRepository,
+    VerificationCodeRepository,
 )
 from accounts.domain.entities import Profile, User
 from accounts.domain.value_objects import Email
@@ -602,6 +605,9 @@ class InMemoryRecurringTransactionRepository:
     def delete(self, recurring_id, user_id):
         return _pop_owned(self._by_id, recurring_id, user_id)
 
+    def list_runs_on(self, on):
+        return [r for r in self.list_due(on) if r.next_run == on]
+
     def list_due(self, on):
         def on_live_account(r):
             if self._accounts is None:
@@ -661,6 +667,14 @@ class InMemoryNotificationRepository:
         self._by_id[notification.id] = notification
         return notification
 
+    def add_once(self, notification, key):
+        keys = self.__dict__.setdefault("_keys", set())
+        if (notification.user_id, key) in keys:
+            return False
+        keys.add((notification.user_id, key))
+        self.add(notification)
+        return True
+
     def list_for_user(self, user_id):
         return [n for n in self._by_id.values() if n.user_id == user_id]
 
@@ -678,3 +692,54 @@ class InMemoryNotificationRepository:
         for nid, n in list(self._by_id.items()):
             if n.user_id == user_id and not n.is_read:
                 self._by_id[nid] = replace(n, is_read=True)
+
+
+class InMemoryVerificationCodeRepository(VerificationCodeRepository):
+    def __init__(self) -> None:
+        self.by_key: dict = {}
+
+    def replace(self, code):
+        self.by_key[(code.user_id, code.purpose)] = code
+        return code
+
+    def get_live(self, user_id, purpose):
+        return self.by_key.get((user_id, purpose))
+
+    def reserve_attempt(self, code_id, limit):
+        for key, code in self.by_key.items():
+            if code.id == code_id:
+                if code.attempts >= limit:
+                    return False
+                self.by_key[key] = replace(code, attempts=code.attempts + 1)
+                return True
+        return False
+
+    def delete(self, code_id):
+        self.by_key = {k: c for k, c in self.by_key.items() if c.id != code_id}
+
+    def delete_for(self, user_id, purpose):
+        self.by_key.pop((user_id, purpose), None)
+
+
+class FakeCodeSender(CodeSender):
+    """Keeps the mailed codes: ``sent[-1]`` is ``(email, purpose, code)``."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    def send(self, user, purpose, code, ttl_minutes):
+        self.sent.append((user.email.value, purpose, code))
+
+    def email_changed(self, old_email, new_email):
+        self.sent.append((old_email, "email_changed", new_email))
+
+    @property
+    def last_code(self) -> str:
+        return self.sent[-1][2]
+
+
+def fake_codes(clock=None, sender=None):
+    """A ``VerificationCodes`` over in-memory fakes; returns ``(codes, sender, repo)``."""
+    sender = sender or FakeCodeSender()
+    repo = InMemoryVerificationCodeRepository()
+    return VerificationCodes(repo, sender, clock or FakeClock(), "pepper"), sender, repo

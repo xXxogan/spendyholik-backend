@@ -134,6 +134,20 @@ def transaction_to_view(dto) -> dict[str, Any]:
     }
 
 
+def feed_item_to_view(dto) -> dict[str, Any]:
+    return {
+        "kind": dto.kind,
+        "id": str(dto.id),
+        "date": _iso_date(dto.date),
+        "amount": money_to_view(dto.amount),
+        "effect": dto.effect,
+        "account": ref_to_view(dto.account),
+        "transaction": transaction_to_view(dto.transaction) if dto.transaction else None,
+        "debt": dto.debt,
+        "goal": dto.goal,
+    }
+
+
 def budget_to_view(dto) -> dict[str, Any]:
     return {
         "id": str(dto.id),
@@ -191,6 +205,8 @@ def debt_to_view(dto) -> dict[str, Any]:
         "is_closed": dto.is_closed,
         "note": dto.note,
         "created_at": dto.created_at.isoformat() if dto.created_at else None,
+        "account_id": str(dto.account_id) if dto.account_id else None,
+        "opened_on": _iso_date(dto.opened_on),
     }
 
 
@@ -210,6 +226,7 @@ def notification_to_view(dto) -> dict[str, Any]:
         "type": dto.type.value,
         "subject": dto.subject,
         "amount_minor": dto.amount_minor,
+        "currency": dto.currency or None,
         "percent": dto.percent,
         "title": dto.title,
         "body": dto.body,

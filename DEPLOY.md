@@ -331,6 +331,36 @@ kubectl -n spendyholik get certificate
 
 ---
 
+## Почта (SMTP)
+
+Без почты новые пользователи не смогут войти дальше профиля: регистрация, смена
+почты и смена пароля подтверждаются кодом из письма. Письма отправляет Celery
+worker (задача `spendyholik.send_email`, 5 повторов при ошибке SMTP).
+
+В `values-server.yaml`:
+
+```yaml
+env:
+  EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
+  EMAIL_HOST: "smtp.<провайдер>"
+  EMAIL_PORT: "587"
+  EMAIL_USE_TLS: "true"
+  EMAIL_HOST_USER: "noreply@<domain>"
+  DEFAULT_FROM_EMAIL: "SpendyHolik <noreply@<domain>>"
+```
+
+В `secrets.yaml`:
+
+```yaml
+secrets:
+  EMAIL_HOST_PASSWORD: "<пароль приложения SMTP>"
+```
+
+Затем `~/spendyholik_backend/deploy/server-update.sh`. Проверка: зарегистрируйтесь —
+в логах worker будет `Task spendyholik.send_email[...] succeeded`.
+
+---
+
 ## Параметры чарта
 
 Основное в `deploy/charts/spendyholik-backend/values.yaml`:
@@ -367,4 +397,4 @@ kubectl -n spendyholik get certificate
 | CD: `ssh: handshake failed` | неверные `VPS_SSH_KEY` / `VPS_USER` или ключ не добавлен на сервер |
 | `Missing .../values-server.yaml`, `secrets.SECRET_KEY is required` | не выполнены шаги 4–5 |
 | `/ready/` → 400 | хост запроса не входит в `ALLOWED_HOSTS` |
-| Письма не приходят | по умолчанию почта пишется в логи API (`EMAIL_BACKEND` = console) |
+| Письма не приходят | `EMAIL_BACKEND` = console (письмо — в логах worker) или ошибка SMTP — смотрите логи Celery |

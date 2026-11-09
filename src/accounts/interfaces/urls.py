@@ -4,14 +4,17 @@ from django.urls import path
 
 from accounts.interfaces.views import (
     ChangePasswordView,
+    ConfirmEmailView,
     ConfirmPasswordResetView,
     LoginView,
     LogoutView,
+    PasswordChangeCodeView,
     ProfileDataView,
     ProfileView,
     RefreshTokenView,
     RegisterView,
     RequestPasswordResetView,
+    ResendEmailCodeView,
     SocialLoginView,
 )
 
@@ -27,5 +30,8 @@ urlpatterns = [
     path("auth/social/<str:provider>/", SocialLoginView.as_view(), name="social"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("profile/password/", ChangePasswordView.as_view(), name="change-password"),
+    path("profile/password/code/", PasswordChangeCodeView.as_view(), name="change-password-code"),
+    path("auth/email/confirm/", ConfirmEmailView.as_view(), name="email-confirm"),
+    path("auth/email/resend/", ResendEmailCodeView.as_view(), name="email-resend"),
     path("profile/data/", ProfileDataView.as_view(), name="profile-data"),
 ]

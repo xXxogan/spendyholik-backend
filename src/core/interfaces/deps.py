@@ -4,26 +4,35 @@ from __future__ import annotations
 
 from django.conf import settings
 
+from accounts.application.codes import VerificationCodes
 from accounts.application.use_cases import (
     ChangePassword,
+    ConfirmEmail,
     ConfirmPasswordReset,
     GetProfile,
     LoginUser,
     LogoutUser,
     RefreshToken,
     RegisterUser,
+    RequestPasswordChangeCode,
     RequestPasswordReset,
+    ResendEmailCode,
     SocialLogin,
     UpdateProfile,
     WipeUserData,
 )
 from accounts.infrastructure.gateways import (
+    CeleryEmailCodeSender,
     DjangoCachePasswordResetGateway,
     DjangoPasswordHasher,
     SimpleJWTTokenService,
     SocialAuthIdentityProvider,
 )
-from accounts.infrastructure.repositories import DjangoProfileRepository, DjangoUserRepository
+from accounts.infrastructure.repositories import (
+    DjangoProfileRepository,
+    DjangoUserRepository,
+    DjangoVerificationCodeRepository,
+)
 from analytics.application.use_cases import (
     GetDashboard,
     GetMonthlyTrend,
@@ -33,6 +42,7 @@ from analytics.application.use_cases import (
 )
 from core.infrastructure.balances import DjangoBalanceReader
 from core.infrastructure.erasure import DjangoUserDataEraser
+from core.infrastructure.feed import DjangoFeedReader
 from debts.application.use_cases import (
     CreateDebt,
     DeleteDebt,
@@ -60,6 +70,7 @@ from finances.application.use_cases import (
     ListAccounts,
     ListBudgets,
     ListCategories,
+    ListFeed,
     ListTransactions,
     RefreshExchangeRates,
     UnarchiveAccount,
@@ -86,6 +97,12 @@ from goals.application.use_cases import (
     UpdateGoal,
 )
 from goals.infrastructure.repositories import DjangoGoalContributionRepository, DjangoGoalRepository
+from notifications.application.triggers import (
+    GoalNotifications,
+    Notifier,
+    NotifyUpcomingRecurring,
+    TransactionNotifications,
+)
 from notifications.application.use_cases import ListNotifications, MarkNotificationsRead
 from notifications.infrastructure.repositories import DjangoNotificationRepository
 from recurring.application.use_cases import (
@@ -106,6 +123,14 @@ class Container:
     """Lazily builds use cases; instantiate once per request if desired."""
 
     # --- accounts ---
+    def _codes(self) -> VerificationCodes:
+        return VerificationCodes(
+            DjangoVerificationCodeRepository(),
+            CeleryEmailCodeSender(),
+            SystemClock(),
+            settings.SECRET_KEY,
+        )
+
     def register_user(self) -> RegisterUser:
         return RegisterUser(
             DjangoUserRepository(),
@@ -113,6 +138,8 @@ class Container:
             DjangoPasswordHasher(),
             SimpleJWTTokenService(),
             DjangoUnitOfWork(),
+            SystemClock(),
+            self._codes(),
         )
 
     def login_user(self) -> LoginUser:
@@ -149,15 +176,31 @@ class Container:
         return GetProfile(DjangoProfileRepository(), DjangoUserRepository())
 
     def update_profile(self) -> UpdateProfile:
-        return UpdateProfile(DjangoProfileRepository(), DjangoUserRepository(), DjangoUnitOfWork())
+        return UpdateProfile(
+            DjangoProfileRepository(),
+            DjangoUserRepository(),
+            DjangoUnitOfWork(),
+            self._codes(),
+            DjangoPasswordHasher(),
+            CeleryEmailCodeSender(),
+        )
 
     def wipe_user_data(self) -> WipeUserData:
         return WipeUserData(DjangoUserDataEraser(), DjangoUnitOfWork())
 
     def change_password(self) -> ChangePassword:
         return ChangePassword(
-            DjangoUserRepository(), DjangoPasswordHasher(), SimpleJWTTokenService()
+            DjangoUserRepository(), DjangoPasswordHasher(), SimpleJWTTokenService(), self._codes()
         )
+
+    def request_password_change_code(self) -> RequestPasswordChangeCode:
+        return RequestPasswordChangeCode(DjangoUserRepository(), self._codes())
+
+    def confirm_email(self) -> ConfirmEmail:
+        return ConfirmEmail(DjangoUserRepository(), self._codes())
+
+    def resend_email_code(self) -> ResendEmailCode:
+        return ResendEmailCode(DjangoUserRepository(), self._codes())
 
     # --- finances ---
     def create_account(self) -> CreateAccount:
@@ -193,21 +236,42 @@ class Container:
     def delete_category(self) -> DeleteCategory:
         return DeleteCategory(DjangoCategoryRepository())
 
+    def _notifier(self) -> Notifier:
+        return Notifier(DjangoNotificationRepository(), DjangoProfileRepository())
+
+    def _transaction_observer(self) -> TransactionNotifications:
+        return TransactionNotifications(
+            self._notifier(),
+            DjangoBudgetRepository(),
+            DjangoCategoryRepository(),
+            self._budget_reporter(),
+            DjangoUnitOfWork(),
+        )
+
     def create_transaction(self) -> CreateTransaction:
         return CreateTransaction(
-            DjangoAccountRepository(), DjangoCategoryRepository(), DjangoTransactionRepository()
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+            DjangoTransactionRepository(),
+            self._transaction_observer(),
         )
 
     def update_transaction(self) -> UpdateTransaction:
         return UpdateTransaction(
-            DjangoAccountRepository(), DjangoCategoryRepository(), DjangoTransactionRepository()
+            DjangoAccountRepository(),
+            DjangoCategoryRepository(),
+            DjangoTransactionRepository(),
+            self._transaction_observer(),
         )
 
     def delete_transaction(self) -> DeleteTransaction:
-        return DeleteTransaction(DjangoTransactionRepository())
+        return DeleteTransaction(DjangoTransactionRepository(), self._transaction_observer())
 
     def get_transaction(self) -> GetTransaction:
         return GetTransaction(DjangoTransactionRepository())
+
+    def list_feed(self) -> ListFeed:
+        return ListFeed(DjangoFeedReader())
 
     def list_transactions(self) -> ListTransactions:
         return ListTransactions(DjangoTransactionRepository())
@@ -262,6 +326,7 @@ class Container:
             DjangoBalanceReader(),
             DjangoUnitOfWork(),
             SystemClock(),
+            GoalNotifications(self._notifier(), DjangoUnitOfWork()),
         )
 
     def update_goal(self) -> UpdateGoal:
@@ -280,6 +345,7 @@ class Container:
             DjangoAccountRepository(),
             DjangoBalanceReader(),
             DjangoUnitOfWork(),
+            GoalNotifications(self._notifier(), DjangoUnitOfWork()),
         )
 
     def list_goal_contributions(self) -> ListGoalContributions:
@@ -335,20 +401,38 @@ class Container:
             DjangoTransactionRepository(),
             DjangoUnitOfWork(),
             SystemClock(),
+            self._transaction_observer(),
+        )
+
+    def notify_upcoming_recurring(self) -> NotifyUpcomingRecurring:
+        return NotifyUpcomingRecurring(
+            DjangoRecurringTransactionRepository(), self._notifier(), SystemClock()
         )
 
     # --- debts ---
     def create_debt(self) -> CreateDebt:
-        return CreateDebt(DjangoDebtRepository(), SystemClock())
+        return CreateDebt(
+            DjangoDebtRepository(), SystemClock(), DjangoAccountRepository(), DjangoBalanceReader()
+        )
 
     def update_debt(self) -> UpdateDebt:
-        return UpdateDebt(DjangoDebtRepository(), DjangoUnitOfWork())
+        return UpdateDebt(
+            DjangoDebtRepository(),
+            DjangoUnitOfWork(),
+            DjangoAccountRepository(),
+            DjangoBalanceReader(),
+        )
 
     def list_debts(self) -> ListDebts:
         return ListDebts(DjangoDebtRepository())
 
     def delete_debt(self) -> DeleteDebt:
-        return DeleteDebt(DjangoDebtRepository())
+        return DeleteDebt(
+            DjangoDebtRepository(),
+            DjangoDebtPaymentRepository(),
+            DjangoAccountRepository(),
+            DjangoBalanceReader(),
+        )
 
     def get_debt_detail(self) -> GetDebtDetail:
         return GetDebtDetail(DjangoDebtRepository(), DjangoDebtPaymentRepository())

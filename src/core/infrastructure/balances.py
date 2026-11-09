@@ -1,7 +1,7 @@
 """Account balances across bounded contexts.
 
 Lives in ``core`` because a balance is moved by finances transactions, goal
-contributions and debt repayments alike; one query per source, grouped by
+contributions, debt openings and repayments alike; one query per source, grouped by
 account (and by day for the history).
 """
 
@@ -15,7 +15,7 @@ from uuid import UUID
 from django.db.models import Case, DecimalField, F, Q, Sum, When
 
 from debts.domain.enums import DebtDirection
-from debts.infrastructure.orm.models import DebtPayment
+from debts.infrastructure.orm.models import Debt, DebtPayment
 from finances.application.ports import BalanceReader
 from finances.domain.enums import TransactionType
 from finances.infrastructure.orm.models import Transaction
@@ -35,18 +35,25 @@ class DjangoBalanceReader(BalanceReader):
         incoming = own.filter(type=TransactionType.TRANSFER.value)
         contributions = GoalContribution.objects.filter(goal__user_id=user_id)
         payments = DebtPayment.objects.filter(debt__user_id=user_id)
+        # The opening of a debt tied to an account, dated by ``opened_on``.
+        openings = Debt.objects.filter(user_id=user_id, opened_on__isnull=False).alias(
+            date=F("opened_on")
+        )
         if account_ids is not None:
             ids = list(account_ids)
             own = own.filter(account_id__in=ids)
             incoming = incoming.filter(transfer_to_account_id__in=ids)
             contributions = contributions.filter(account_id__in=ids)
             payments = payments.filter(account_id__in=ids)
+            openings = openings.filter(account_id__in=ids)
         return [
             # Income adds; expenses and the outgoing leg of a transfer subtract.
             (own, "account_id", _signed(~Q(type=TransactionType.INCOME.value))),
             (incoming, "transfer_to_account_id", F("amount")),
             (contributions, "account_id", -F("amount")),
             (payments, "account_id", _signed(Q(debt__direction=DebtDirection.I_OWE.value))),
+            # Borrowed money comes in; lent money goes out.
+            (openings, "account_id", _signed(Q(direction=DebtDirection.OWED_TO_ME.value))),
         ]
 
     def deltas(self, user_id, account_ids=None, *, before=None):
@@ -73,10 +80,11 @@ class DjangoBalanceReader(BalanceReader):
             rows = (
                 qs.filter(date__gte=date_from, date__lte=date_to)
                 .order_by()
-                .values("date")
+                .annotate(day=F("date"))
+                .values("day")
                 .annotate(total=Sum(amount, output_field=_MONEY))
             )
             for row in rows:
-                day = row["date"]
+                day = row["day"]
                 result[day] = result.get(day, Decimal(0)) + Decimal(row["total"] or 0)
         return {day: total for day, total in result.items() if total}

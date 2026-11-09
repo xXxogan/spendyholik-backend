@@ -9,12 +9,14 @@ from uuid import UUID
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.cache import cache
 from django.core.mail import send_mail
+from django.db import transaction
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.application.ports import (
     AuthTokenService,
+    CodeSender,
     PasswordHasher,
     PasswordResetGateway,
     SocialIdentity,
@@ -22,6 +24,7 @@ from accounts.application.ports import (
     TokenPair,
 )
 from accounts.domain.entities import User
+from accounts.domain.enums import CodePurpose
 from accounts.domain.exceptions import InvalidTokenError
 from accounts.infrastructure.orm.models import User as UserORM
 
@@ -126,3 +129,48 @@ class SocialAuthIdentityProvider(SocialIdentityProvider):
     def exchange(self, provider: str, credential: str) -> SocialIdentity | None:
         # TODO(production): use social_django backends to exchange the code/token.
         return None
+
+
+_CODE_MAIL = {
+    CodePurpose.VERIFY_EMAIL: (
+        "SpendyHolik: код подтверждения почты",
+        "Ваш код подтверждения почты: {code}\n\nКод действует {ttl} мин. "
+        "Если вы не регистрировались в SpendyHolik, просто проигнорируйте это письмо.",
+    ),
+    CodePurpose.CHANGE_PASSWORD: (
+        "SpendyHolik: код для смены пароля",
+        "Ваш код для смены пароля: {code}\n\nКод действует {ttl} мин. "
+        "Если вы не меняли пароль, никому не сообщайте код и смените пароль.",
+    ),
+}
+
+
+class CeleryEmailCodeSender(CodeSender):
+    """Mails the code from a Celery worker once the surrounding transaction commits."""
+
+    def send(self, user: User, purpose: CodePurpose, code: str, ttl_minutes: int) -> None:
+
+        subject, body = _CODE_MAIL[purpose]
+        text = body.format(code=code, ttl=ttl_minutes)
+        # The task must not outlive the code it carries.
+        _mail_after_commit(user.email.value, subject, text, expires=ttl_minutes * 60)
+
+    def email_changed(self, old_email: str, new_email: str) -> None:
+        _mail_after_commit(
+            old_email,
+            "SpendyHolik: почта аккаунта изменена",
+            f"Почта вашего аккаунта SpendyHolik изменена на {new_email}.\n\n"
+            "Если это сделали не вы, восстановите доступ через сброс пароля и "
+            "напишите в поддержку.",
+        )
+
+
+def _mail_after_commit(to: str, subject: str, body: str, expires: int | None = None) -> None:
+    """Queue the mail once the transaction commits; a broker outage is logged, not raised."""
+    from tasks.tasks import send_email
+
+    def enqueue() -> None:
+        send_email.apply_async((to, subject, body), expires=expires)
+
+    # robust: a failed enqueue (Redis down) must not turn a committed write into a 500.
+    transaction.on_commit(enqueue, robust=True)

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from accounts.domain.entities import Profile, User
+from accounts.domain.entities import Profile, User, VerificationCode
+from accounts.domain.enums import CodePurpose
 from accounts.domain.value_objects import Email
 
 
@@ -43,6 +44,37 @@ class ProfileRepository(ABC):
 
     @abstractmethod
     def update(self, profile: Profile) -> Profile: ...
+
+
+class VerificationCodeRepository(ABC):
+    @abstractmethod
+    def replace(self, code: VerificationCode) -> VerificationCode:
+        """Store ``code`` as the only live code of its user and purpose."""
+
+    @abstractmethod
+    def get_live(self, user_id: UUID, purpose: CodePurpose) -> VerificationCode | None:
+        """The current code of the user and purpose (possibly expired)."""
+
+    @abstractmethod
+    def reserve_attempt(self, code_id: UUID, limit: int) -> bool:
+        """Count one attempt atomically; ``False`` if ``limit`` attempts were already used."""
+
+    @abstractmethod
+    def delete(self, code_id: UUID) -> None: ...
+
+    @abstractmethod
+    def delete_for(self, user_id: UUID, purpose: CodePurpose) -> None: ...
+
+
+class CodeSender(ABC):
+    """Delivers a one-time code to the user (by email)."""
+
+    @abstractmethod
+    def send(self, user: User, purpose: CodePurpose, code: str, ttl_minutes: int) -> None: ...
+
+    @abstractmethod
+    def email_changed(self, old_email: str, new_email: str) -> None:
+        """Tell the previous address that the account moved to ``new_email``."""
 
 
 class UserDataEraser(ABC):

@@ -5,6 +5,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from accounts.application.dto import (
     ChangePasswordInput,
+    ConfirmEmailInput,
     ConfirmPasswordResetInput,
     LoginUserInput,
     RegisterUserInput,
@@ -15,35 +16,53 @@ from accounts.application.dto import (
 from accounts.application.ports import SocialIdentity
 from accounts.application.use_cases import (
     ChangePassword,
+    ConfirmEmail,
     ConfirmPasswordReset,
     GetProfile,
     LoginUser,
     RegisterUser,
+    RequestPasswordChangeCode,
     RequestPasswordReset,
+    ResendEmailCode,
     SocialLogin,
     UpdateProfile,
 )
+from accounts.domain.enums import CodePurpose
 from accounts.domain.exceptions import (
     EmailAlreadyTakenError,
+    EmailAlreadyVerifiedError,
+    InvalidCodeError,
     InvalidCredentialsError,
     PasswordResetTokenInvalidError,
     ProfileNotFoundError,
+    ResendTooSoonError,
     WrongPasswordError,
 )
 from accounts.domain.value_objects import Email
 from shared.exceptions import ValidationError as DomainValidationError
 from tests.fakes import (
     FakeAuthTokenService,
+    FakeClock,
     FakePasswordHasher,
     FakePasswordResetGateway,
     FakeSocialIdentityProvider,
     FakeUnitOfWork,
     InMemoryProfileRepository,
     InMemoryUserRepository,
+    fake_codes,
 )
+
+CODES, SENDER, REPO = None, None, None
+
+
+def _past_cooldown():
+    """Forget the live codes, as if the resend cooldown had passed."""
+    REPO.by_key.clear()
 
 
 def _registrar():
+    global CODES, SENDER, REPO
+    CODES, SENDER, REPO = fake_codes()
     users = InMemoryUserRepository()
     profiles = InMemoryProfileRepository()
     hasher = FakePasswordHasher()
@@ -52,8 +71,12 @@ def _registrar():
 
 
 def _register(users, profiles, hasher, tokens, email="a@b.co", password="password123"):
-    return RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
-        RegisterUserInput(email=email, password=password, first_name="Ann")
+    return RegisterUser(
+        users, profiles, hasher, tokens, FakeUnitOfWork(), FakeClock(), CODES
+    ).execute(
+        RegisterUserInput(
+            email=email, password=password, first_name="Ann", personal_data_consent=True
+        )
     )
 
 
@@ -74,13 +97,15 @@ class TestRegisterUser:
     def test_invalid_email_raises(self):
         users, profiles, hasher, tokens = _registrar()
         with pytest.raises(DomainValidationError):
-            RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
-                RegisterUserInput(email="nope", password="password123")
+            RegisterUser(
+                users, profiles, hasher, tokens, FakeUnitOfWork(), FakeClock(), CODES
+            ).execute(
+                RegisterUserInput(email="nope", password="password123", personal_data_consent=True)
             )
 
     def test_short_password_rejected_by_input_dto(self):
         with pytest.raises(PydanticValidationError):
-            RegisterUserInput(email="a@b.co", password="short")
+            RegisterUserInput(email="a@b.co", password="short", personal_data_consent=True)
 
 
 class TestLoginUser:
@@ -123,7 +148,7 @@ class TestProfile:
     def test_update_profile(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        updated = UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
+        updated = UpdateProfile(profiles, users, FakeUnitOfWork(), CODES, hasher, SENDER).execute(
             result.user.id, UpdateProfileInput(onboarded=True, theme="dark")
         )
         assert updated.onboarded is True
@@ -132,8 +157,10 @@ class TestProfile:
     def test_update_name_and_email(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        updated = UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
-            result.user.id, UpdateProfileInput(first_name="Аня", email="New@B.co")
+        _past_cooldown()
+        updated = UpdateProfile(profiles, users, FakeUnitOfWork(), CODES, hasher, SENDER).execute(
+            result.user.id,
+            UpdateProfileInput(first_name="Аня", email="New@B.co", current_password="password123"),
         )
         assert (updated.first_name, updated.email) == ("Аня", "new@b.co")
         assert users.get_by_id(result.user.id).email.value == "new@b.co"
@@ -144,38 +171,116 @@ class TestProfile:
     def test_update_to_a_taken_email_rejected(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork()).execute(
-            RegisterUserInput(email="taken@b.co", password="password123")
+        RegisterUser(users, profiles, hasher, tokens, FakeUnitOfWork(), FakeClock(), CODES).execute(
+            RegisterUserInput(
+                email="taken@b.co", password="password123", personal_data_consent=True
+            )
         )
         with pytest.raises(EmailAlreadyTakenError) as exc:
-            UpdateProfile(profiles, users, FakeUnitOfWork()).execute(
-                result.user.id, UpdateProfileInput(email="taken@b.co")
+            UpdateProfile(profiles, users, FakeUnitOfWork(), CODES, hasher, SENDER).execute(
+                result.user.id,
+                UpdateProfileInput(email="taken@b.co", current_password="password123"),
             )
         assert exc.value.errors == {"email": "email_already_taken"}
 
 
 class TestChangePassword:
-    def test_changes_password(self):
+    def _change(self, users, hasher, tokens, user_id, code, new="newpass456"):
+        ChangePassword(users, hasher, tokens, CODES).execute(
+            user_id, ChangePasswordInput(code=code, new_password=new)
+        )
+
+    def test_changes_password_with_the_mailed_code(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
-        ChangePassword(users, hasher, tokens).execute(
-            result.user.id,
-            ChangePasswordInput(old_password="password123", new_password="newpass456"),
-        )
-        # Login with the new password succeeds.
+        RequestPasswordChangeCode(users, CODES).execute(result.user.id)
+        assert SENDER.sent[-1][1] is CodePurpose.CHANGE_PASSWORD
+        self._change(users, hasher, tokens, result.user.id, SENDER.last_code)
         LoginUser(users, hasher, tokens).execute(
             LoginUserInput(email="a@b.co", password="newpass456")
         )
 
-    def test_wrong_old_password_raises(self):
+    def test_wrong_code_raises_and_password_stays(self):
         users, profiles, hasher, tokens = _registrar()
         result = _register(users, profiles, hasher, tokens)
+        RequestPasswordChangeCode(users, CODES).execute(result.user.id)
+        with pytest.raises(InvalidCodeError) as exc:
+            self._change(users, hasher, tokens, result.user.id, "000000x")
+        assert exc.value.errors == {"code": "invalid_code"}
+        LoginUser(users, hasher, tokens).execute(
+            LoginUserInput(email="a@b.co", password="password123")
+        )
+
+    def test_code_without_request_is_invalid(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        with pytest.raises(InvalidCodeError):
+            self._change(users, hasher, tokens, result.user.id, "123456")
+
+
+class TestEmailConfirmation:
+    def test_registration_mails_a_code_and_leaves_email_unconfirmed(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        assert result.user.email_verified is False
+        assert SENDER.sent[-1][:2] == ("a@b.co", CodePurpose.VERIFY_EMAIL)
+        confirmed = ConfirmEmail(users, CODES).execute(
+            result.user.id, ConfirmEmailInput(code=SENDER.last_code)
+        )
+        assert confirmed.email_verified is True
+        with pytest.raises(InvalidCodeError):  # a used code is gone
+            CODES.verify(result.user.id, CodePurpose.VERIFY_EMAIL, SENDER.last_code)
+
+    def test_already_confirmed(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        ConfirmEmail(users, CODES).execute(result.user.id, ConfirmEmailInput(code=SENDER.last_code))
+        with pytest.raises(EmailAlreadyVerifiedError):
+            ResendEmailCode(users, CODES).execute(result.user.id)
+
+    def test_changing_the_email_needs_a_new_confirmation(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        ConfirmEmail(users, CODES).execute(result.user.id, ConfirmEmailInput(code=SENDER.last_code))
+        updated = UpdateProfile(profiles, users, FakeUnitOfWork(), CODES, hasher, SENDER).execute(
+            result.user.id, UpdateProfileInput(email="new@b.co", current_password="password123")
+        )
+        assert updated.email_verified is False
+        assert SENDER.sent[-2][:2] == ("new@b.co", CodePurpose.VERIFY_EMAIL)
+        assert SENDER.sent[-1] == ("a@b.co", "email_changed", "new@b.co")
+
+    def _move(self, users, profiles, hasher, user_id, **fields):
+        return UpdateProfile(profiles, users, FakeUnitOfWork(), CODES, hasher, SENDER).execute(
+            user_id, UpdateProfileInput(email="new@b.co", **fields)
+        )
+
+    def test_changing_the_email_needs_the_current_password(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        _past_cooldown()
+        with pytest.raises(DomainValidationError) as exc:
+            self._move(users, profiles, hasher, result.user.id)
+        assert exc.value.errors == {"current_password": "required"}
         with pytest.raises(WrongPasswordError) as exc:
-            ChangePassword(users, hasher, tokens).execute(
-                result.user.id, ChangePasswordInput(old_password="bad", new_password="newpass456")
-            )
-        assert exc.value.http_status == 422
-        assert exc.value.errors == {"old_password": "wrong_password"}
+            self._move(users, profiles, hasher, result.user.id, current_password="nope")
+        assert exc.value.errors == {"current_password": "wrong_password"}
+        assert users.get_by_id(result.user.id).email.value == "a@b.co"
+
+    def test_email_change_respects_the_resend_cooldown(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        with pytest.raises(ResendTooSoonError):
+            self._move(users, profiles, hasher, result.user.id, current_password="password123")
+
+    def test_email_change_revokes_a_pending_password_code(self):
+        users, profiles, hasher, tokens = _registrar()
+        result = _register(users, profiles, hasher, tokens)
+        ConfirmEmail(users, CODES).execute(result.user.id, ConfirmEmailInput(code=SENDER.last_code))
+        RequestPasswordChangeCode(users, CODES).execute(result.user.id)
+        old_code = SENDER.last_code
+        self._move(users, profiles, hasher, result.user.id, current_password="password123")
+        with pytest.raises(InvalidCodeError):
+            CODES.verify(result.user.id, CodePurpose.CHANGE_PASSWORD, old_code)
 
 
 class TestPasswordReset:

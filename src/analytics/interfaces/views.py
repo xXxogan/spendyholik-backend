@@ -3,12 +3,12 @@
 from datetime import date
 
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, ok, query_int
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.renderers import category_ref_to_view, dashboard_to_view, money_to_view
 from core.interfaces.schemas import api_doc, many
 from finances.domain.enums import Granularity
@@ -29,7 +29,7 @@ def _dates(request: Request):
 
 
 class DashboardView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.DashboardOut)
     def get(self, request: Request):
@@ -37,7 +37,7 @@ class DashboardView(BaseAPIView):
 
 
 class SummaryView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.SummaryOut, parameters=sc.DATE_RANGE, errors=(401, 422))
     def get(self, request: Request):
@@ -54,7 +54,7 @@ class SummaryView(BaseAPIView):
 
 
 class SpendingByCategoryView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         many(sc.CategorySpendingOut),
@@ -80,7 +80,7 @@ class SpendingByCategoryView(BaseAPIView):
 
 
 class MonthlyTrendView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.MonthlyPointOut), parameters=sc.MONTHS, errors=(401, 422))
     def get(self, request: Request):
@@ -99,7 +99,7 @@ class MonthlyTrendView(BaseAPIView):
 
 
 class TrendView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.TrendPointOut), parameters=sc.TREND, errors=(401, 422))
     def get(self, request: Request):

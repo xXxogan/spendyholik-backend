@@ -18,7 +18,7 @@ from goals.application.dto import (
     GoalForecastDTO,
     UpdateGoalInput,
 )
-from goals.application.ports import GoalContributionRepository, GoalRepository
+from goals.application.ports import GoalContributionRepository, GoalObserver, GoalRepository
 from goals.domain.entities import Goal, GoalContribution
 from goals.domain.exceptions import GoalNotFoundError, GoalTargetExceededError
 from shared.application.patch import apply_patch
@@ -93,6 +93,7 @@ class CreateGoal:
         balances: BalanceReader,
         uow: UnitOfWork,
         clock: Clock,
+        observer: GoalObserver | None = None,
     ) -> None:
         self._goals = goals
         self._contributions = contributions
@@ -100,6 +101,7 @@ class CreateGoal:
         self._balances = balances
         self._uow = uow
         self._clock = clock
+        self._observer = observer
 
     def execute(self, user_id: UUID, data: CreateGoalInput) -> GoalDTO:
         target = Money.from_minor_units(data.target_amount_minor, data.currency)
@@ -135,6 +137,8 @@ class CreateGoal:
                         date=self._clock.now().date(),
                     )
                 )
+        if self._observer is not None and initial.is_positive():
+            self._observer.progressed(user_id, goal, Money.zero(initial.currency), initial)
         return _goal_dto(goal, initial)
 
 
@@ -194,12 +198,14 @@ class ContributeToGoal:
         accounts: AccountRepository,
         balances: BalanceReader,
         uow: UnitOfWork,
+        observer: GoalObserver | None = None,
     ) -> None:
         self._goals = goals
         self._contributions = contributions
         self._accounts = accounts
         self._balances = balances
         self._uow = uow
+        self._observer = observer
 
     def execute(
         self, user_id: UUID, goal_id: UUID, data: ContributeToGoalInput
@@ -220,6 +226,8 @@ class ContributeToGoal:
                     goal_id=goal_id, account_id=account.id, amount=amount, date=data.date
                 )
             )
+        if self._observer is not None:
+            self._observer.progressed(user_id, goal, current, current + amount)
         return _contribution_dto(contribution, account_refs(self._accounts, user_id))
 
 

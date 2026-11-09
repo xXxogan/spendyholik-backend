@@ -47,6 +47,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField("email address", unique=True, db_index=True)
     first_name = models.CharField("first name", max_length=150, blank=True)
+    # Accounts that existed before email confirmation count as confirmed.
+    email_verified = models.BooleanField("email verified", default=True)
+    personal_data_consent_at = models.DateTimeField(
+        "personal data consent given at", null=True, blank=True
+    )
     is_staff = models.BooleanField("staff status", default=False)
     is_active = models.BooleanField("active", default=True)
     date_joined = models.DateTimeField("date joined", default=timezone.now)
@@ -79,6 +84,7 @@ class Profile(models.Model):
     notify_budget = models.BooleanField(default=True)
     notify_goal = models.BooleanField(default=True)
     notify_recurring = models.BooleanField(default=True)
+    notify_income = models.BooleanField(default=True)
     notify_weekly_report = models.BooleanField(default=True)
 
     class Meta:
@@ -87,3 +93,24 @@ class Profile(models.Model):
 
     def __str__(self) -> str:
         return f"Profile({self.user_id})"
+
+
+class VerificationCode(models.Model):
+    """A mailed one-time code (hash only); one live code per user and purpose."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="verification_codes")
+    purpose = models.CharField(max_length=30)
+    code_hash = models.CharField(max_length=64)
+    sent_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_count = models.PositiveSmallIntegerField(default=1)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "purpose"], name="uniq_code_user_purpose"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.purpose} for {self.user_id}"

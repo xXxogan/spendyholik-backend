@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.renderers import contribution_to_view, goal_to_view, money_to_view
 from core.interfaces.schemas import api_doc, many
 from goals.application.dto import ContributeToGoalInput, CreateGoalInput, UpdateGoalInput
@@ -20,7 +20,7 @@ def _uuid(value: str | UUID) -> UUID:
 
 
 class GoalListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.GoalOut), operation_id="api_v1_goals_list")
     def get(self, request: Request):
@@ -33,7 +33,7 @@ class GoalListCreateView(BaseAPIView):
 
 
 class GoalDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.GoalOut, errors=sc.READ)
     def get(self, request: Request, pk):
@@ -53,7 +53,7 @@ class GoalDetailView(BaseAPIView):
 
 
 class GoalContributeView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.ContributionOut, request=ContributeToGoalInput, status=201, errors=sc.WRITE)
     def post(self, request: Request, pk):
@@ -63,7 +63,7 @@ class GoalContributeView(BaseAPIView):
 
 
 class GoalContributionListView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.ContributionOut), errors=sc.READ, description="Newest first.")
     def get(self, request: Request, pk):
@@ -72,7 +72,7 @@ class GoalContributionListView(BaseAPIView):
 
 
 class GoalForecastView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.ForecastOut, errors=sc.READ)
     def get(self, request: Request, pk):

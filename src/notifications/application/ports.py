@@ -13,6 +13,10 @@ class NotificationRepository(ABC):
     def add(self, notification: Notification) -> Notification: ...
 
     @abstractmethod
+    def add_once(self, notification: Notification, key: str) -> bool:
+        """Add unless the user already has a notification with ``key``; True if added."""
+
+    @abstractmethod
     def list_for_user(self, user_id: UUID) -> list[Notification]: ...
 
     @abstractmethod

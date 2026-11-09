@@ -112,7 +112,8 @@ class ErrorOut(BaseModel):
         description='Field → code, e.g. {"amount_minor": "required"}. Codes: required, '
         "invalid, invalid_choice, too_short, too_long, too_small, too_large, "
         "currency_mismatch and domain codes (wrong_password, budget_already_exists, "
-        "insufficient_funds, exceeds_target, below_repaid, email_already_taken, …)."
+        "insufficient_funds, exceeds_target, below_repaid, email_already_taken, "
+        "invalid_code, code_expired, too_many_attempts, …)."
     )
 
 
@@ -136,6 +137,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     first_name: str
+    email_verified: bool = Field(description="False until the mailed code is entered.")
 
 
 class TokensOut(BaseModel):
@@ -153,12 +155,17 @@ class ProfileOut(BaseModel):
     user_id: str
     first_name: str
     email: str
+    email_verified: bool
+    personal_data_consent_at: datetime | None = Field(
+        description="When consent to personal data processing was given at registration."
+    )
     base_currency: str
     theme: Theme
     onboarded: bool
     notify_budget: bool
     notify_goal: bool
     notify_recurring: bool
+    notify_income: bool
     notify_weekly_report: bool
 
 
@@ -221,6 +228,36 @@ class TransactionPageOut(BaseModel):
     next_cursor: str | None
 
 
+class FeedDebtOut(BaseModel):
+    id: str
+    person_name: str
+    direction: DebtDirection
+
+
+class FeedGoalOut(BaseModel):
+    id: str
+    name: str
+
+
+class FeedItemOut(BaseModel):
+    kind: Literal["transaction", "debt_opening", "debt_payment", "goal_contribution"]
+    id: str = Field(description="Id of the transaction, debt (opening), payment or contribution.")
+    date: date
+    amount: MoneyOut
+    effect: Literal["in", "out", "transfer"] = Field(
+        description="How it moves the account; `transfer` only without an account filter."
+    )
+    account: AccountRefOut | None
+    transaction: TransactionOut | None = Field(description="Set for `kind = transaction`.")
+    debt: FeedDebtOut | None = Field(description="Set for debt openings and repayments.")
+    goal: FeedGoalOut | None = Field(description="Set for goal contributions.")
+
+
+class FeedPageOut(BaseModel):
+    items: list[FeedItemOut]
+    next_cursor: str | None
+
+
 class BudgetOut(BaseModel):
     id: str
     category: CategoryRefOut
@@ -278,6 +315,8 @@ class DebtOut(BaseModel):
     is_closed: bool
     note: str
     created_at: datetime | None
+    account_id: str | None = Field(description="Account the opening moved money through.")
+    opened_on: date | None
 
 
 class DebtPaymentOut(BaseModel):
@@ -370,7 +409,10 @@ class NotificationOut(BaseModel):
     type: NotificationType
     subject: str = Field(description="What it is about: category, payer, template or goal name.")
     amount_minor: int | None
-    percent: int | None
+    currency: str | None = Field(description="Currency of `amount_minor`.")
+    percent: int | None = Field(
+        description="Budget: share spent (may exceed 100); goal: threshold reached (50/75/100)."
+    )
     title: str
     body: str
     is_read: bool
@@ -401,6 +443,12 @@ TRANSACTION_FILTERS = [
     _query("cursor", OpenApiTypes.STR, "`next_cursor` of the previous page."),
     _query("limit", OpenApiTypes.INT, "Page size, 1–100 (default 20)."),
 ]
+FEED_FILTERS = [
+    _query("account_id", OpenApiTypes.UUID, "Movements of this account only."),
+    *DATE_RANGE,
+    _query("cursor", OpenApiTypes.STR, "`next_cursor` of the previous page."),
+    _query("limit", OpenApiTypes.INT, "Page size, 1–100 (default 20)."),
+]
 INCLUDE_ARCHIVED = [_query("include_archived", OpenApiTypes.BOOL, "Also list archived accounts.")]
 WEEKS = [_query("weeks", OpenApiTypes.INT, "How many weeks back, 1–104 (default 6).")]
 MONTHS = [_query("months", OpenApiTypes.INT, "How many months, 1–36 (default 6).")]
@@ -425,9 +473,12 @@ def many(model: type[BaseModel]) -> type[BaseModel]:
 # ---------------------------------------------------------------------------
 _ERRORS = {
     401: "Not authenticated.",
+    403: "The email is not confirmed yet (`email_not_verified`).",
     404: "Not found.",
     409: "A business rule prevented the operation.",
     422: "Validation failed; see `errors`.",
+    429: "Too many attempts or requests (`too_many_attempts`, `too_many_codes`, "
+    "`resend_too_soon`, `throttled`).",
 }
 
 
@@ -437,7 +488,7 @@ def api_doc(
     request=None,
     status: int = 200,
     parameters=None,
-    errors=(401,),
+    errors=(401, 403),
     description: str | None = None,
     operation_id: str | None = None,
 ):
@@ -454,5 +505,5 @@ def api_doc(
     )
 
 
-READ = (401, 404)
-WRITE = (401, 404, 409, 422)
+READ = (401, 403, 404)
+WRITE = (401, 403, 404, 409, 422)

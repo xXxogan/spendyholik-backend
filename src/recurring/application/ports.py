@@ -27,5 +27,9 @@ class RecurringTransactionRepository(ABC):
         """Delete the user\'s entity; ``False`` if it did not exist."""
 
     @abstractmethod
+    def list_runs_on(self, on: date) -> list[RecurringTransaction]:
+        """Active templates whose ``next_run`` is exactly ``on``, on live accounts."""
+
+    @abstractmethod
     def list_due(self, on: date) -> list[RecurringTransaction]:
         """Active templates with ``next_run <= on`` whose account is not archived."""

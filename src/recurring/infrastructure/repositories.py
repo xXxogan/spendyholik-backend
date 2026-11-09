@@ -39,6 +39,14 @@ class DjangoRecurringTransactionRepository(RecurringTransactionRepository):
         deleted, _ = RecurringORM.objects.filter(pk=recurring_id, user_id=user_id).delete()
         return deleted > 0
 
+    def list_runs_on(self, on: date) -> list[RecurringTransaction]:
+        return [
+            recurring_to_domain(r)
+            for r in RecurringORM.objects.filter(
+                next_run=on, is_active=True, account__is_archived=False
+            )
+        ]
+
     def list_due(self, on: date) -> list[RecurringTransaction]:
         return [
             recurring_to_domain(r)

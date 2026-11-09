@@ -54,11 +54,13 @@ def _seed(client, n):
     ("path", "max_queries"),
     [
         ("/api/v1/transactions/", 2),
-        # auth, profile, month totals, accounts, 4 balance sources, budgets, categories, window
-        ("/api/v1/dashboard/", 11),
+        # auth, profile, month totals, accounts, 5 balance sources, budgets, categories, window
+        ("/api/v1/dashboard/", 12),
         ("/api/v1/goals/", 3),
-        # auth, accounts, 4 balance sources
-        ("/api/v1/accounts/", 6),
+        # auth, accounts, 5 balance sources
+        ("/api/v1/accounts/", 7),
+        # auth, union page, one query per kind, accounts
+        ("/api/v1/feed/", 7),
         # auth, budgets, profile, categories, one aggregate per distinct period
         ("/api/v1/budgets/", 5),
         ("/api/v1/categories/", 3),

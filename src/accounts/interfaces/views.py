@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
+from rest_framework.throttling import ScopedRateThrottle
 
 from accounts.application.dto import (
     ChangePasswordInput,
+    ConfirmEmailInput,
     ConfirmPasswordResetInput,
     LoginUserInput,
     RefreshTokenInput,
@@ -18,16 +20,22 @@ from accounts.application.dto import (
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.schemas import api_doc
+
+
+def _user_view(user) -> dict:
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "first_name": user.first_name,
+        "email_verified": user.email_verified,
+    }
 
 
 def _auth_view(result) -> dict:
     return {
-        "user": {
-            "id": str(result.user.id),
-            "email": result.user.email,
-            "first_name": result.user.first_name,
-        },
+        "user": _user_view(result.user),
         "access": result.tokens.access,
         "refresh": result.tokens.refresh,
         "access_expires_at": result.tokens.access_expires_at.isoformat(),
@@ -40,12 +48,17 @@ def _profile_view(dto) -> dict:
         "user_id": str(dto.user_id),
         "first_name": dto.first_name,
         "email": dto.email,
+        "email_verified": dto.email_verified,
+        "personal_data_consent_at": dto.personal_data_consent_at.isoformat()
+        if dto.personal_data_consent_at
+        else None,
         "base_currency": dto.base_currency,
         "theme": dto.theme.value,
         "onboarded": dto.onboarded,
         "notify_budget": dto.notify_budget,
         "notify_goal": dto.notify_goal,
         "notify_recurring": dto.notify_recurring,
+        "notify_income": dto.notify_income,
         "notify_weekly_report": dto.notify_weekly_report,
     }
 
@@ -134,14 +147,20 @@ class ProfileView(BaseAPIView):
     def get(self, request: Request):
         return ok(_profile_view(container.get_profile().execute(request.user.id)))
 
-    @api_doc(sc.ProfileOut, request=UpdateProfileInput, errors=sc.WRITE)
+    @api_doc(
+        sc.ProfileOut,
+        request=UpdateProfileInput,
+        errors=(*sc.WRITE, 429),
+        description="A new `email` needs `current_password`, is unconfirmed until its code "
+        "is entered, and the old address is told about the change.",
+    )
     def patch(self, request: Request):
         data = self.parse(UpdateProfileInput, request.data)
         return ok(_profile_view(container.update_profile().execute(request.user.id, data)))
 
 
 class ProfileDataView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         None,
@@ -157,10 +176,60 @@ class ProfileDataView(BaseAPIView):
 
 
 class ChangePasswordView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
 
-    @api_doc(sc.DetailOut, request=ChangePasswordInput, errors=(401, 422))
+    @api_doc(
+        sc.DetailOut,
+        request=ChangePasswordInput,
+        errors=(401, 403, 422, 429),
+        description="Needs the code from `POST profile/password/code/`; revokes every session.",
+    )
     def patch(self, request: Request):
         data = self.parse(ChangePasswordInput, request.data)
         container.change_password().execute(request.user.id, data)
+        return ok({"detail": "ok"})
+
+
+class PasswordChangeCodeView(BaseAPIView):
+    permission_classes = [IsVerified]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
+
+    @api_doc(
+        sc.DetailOut,
+        request=None,
+        errors=(401, 403, 429),
+        description="Mails a code that confirms the next password change.",
+    )
+    def post(self, request: Request):
+        container.request_password_change_code().execute(request.user.id)
+        return ok({"detail": "ok"})
+
+
+class ConfirmEmailView(BaseAPIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
+
+    @api_doc(sc.UserOut, request=ConfirmEmailInput, errors=(401, 409, 422, 429))
+    def post(self, request: Request):
+        data = self.parse(ConfirmEmailInput, request.data)
+        return ok(_user_view(container.confirm_email().execute(request.user.id, data)))
+
+
+class ResendEmailCodeView(BaseAPIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
+
+    @api_doc(
+        sc.DetailOut,
+        request=None,
+        errors=(401, 409, 429),
+        description="Mails a new confirmation code; at most once a minute.",
+    )
+    def post(self, request: Request):
+        container.resend_email_code().execute(request.user.id)
         return ok({"detail": "ok"})

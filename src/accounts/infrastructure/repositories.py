@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, models, transaction
 
-from accounts.application.ports import ProfileRepository, UserRepository
-from accounts.domain.entities import Profile, User
-from accounts.domain.exceptions import EmailAlreadyTakenError
+from accounts.application.codes import RESEND_COOLDOWN
+from accounts.application.ports import (
+    ProfileRepository,
+    UserRepository,
+    VerificationCodeRepository,
+)
+from accounts.domain.entities import Profile, User, VerificationCode
+from accounts.domain.enums import CodePurpose
+from accounts.domain.exceptions import EmailAlreadyTakenError, ResendTooSoonError
 from accounts.domain.value_objects import Email
 from accounts.infrastructure.mappers import (
     profile_to_domain,
@@ -18,6 +24,7 @@ from accounts.infrastructure.mappers import (
 )
 from accounts.infrastructure.orm.models import Profile as ProfileORM
 from accounts.infrastructure.orm.models import User as UserORM
+from accounts.infrastructure.orm.models import VerificationCode as VerificationCodeORM
 
 
 class DjangoUserRepository(UserRepository):
@@ -43,9 +50,12 @@ class DjangoUserRepository(UserRepository):
         orm = UserORM.objects.get(pk=user.id)
         orm.first_name = user.first_name
         orm.email = user.email.value
+        orm.email_verified = user.email_verified
+        orm.personal_data_consent_at = user.personal_data_consent_at
+        fields = ["first_name", "email", "email_verified", "personal_data_consent_at"]
         try:
             with transaction.atomic():
-                orm.save(update_fields=["first_name", "email"])
+                orm.save(update_fields=fields)
         except IntegrityError as exc:
             raise EmailAlreadyTakenError from exc
         return user
@@ -77,6 +87,59 @@ class DjangoProfileRepository(ProfileRepository):
             notify_budget=profile.notify_budget,
             notify_goal=profile.notify_goal,
             notify_recurring=profile.notify_recurring,
+            notify_income=profile.notify_income,
             notify_weekly_report=profile.notify_weekly_report,
         )
         return profile
+
+
+def _code_to_domain(orm: VerificationCodeORM) -> VerificationCode:
+    return VerificationCode(
+        id=orm.id,
+        user_id=orm.user_id,
+        purpose=CodePurpose(orm.purpose),
+        code_hash=orm.code_hash,
+        sent_at=orm.sent_at,
+        expires_at=orm.expires_at,
+        attempts=orm.attempts,
+        sent_count=orm.sent_count,
+    )
+
+
+class DjangoVerificationCodeRepository(VerificationCodeRepository):
+    def replace(self, code: VerificationCode) -> VerificationCode:
+        try:
+            with transaction.atomic():
+                VerificationCodeORM.objects.filter(
+                    user_id=code.user_id, purpose=code.purpose.value
+                ).delete()
+                VerificationCodeORM.objects.create(
+                    id=code.id,
+                    user_id=code.user_id,
+                    purpose=code.purpose.value,
+                    code_hash=code.code_hash,
+                    sent_at=code.sent_at,
+                    expires_at=code.expires_at,
+                    attempts=code.attempts,
+                    sent_count=code.sent_count,
+                )
+        except IntegrityError as exc:
+            # A parallel request mailed a code a moment ago.
+            raise ResendTooSoonError(int(RESEND_COOLDOWN.total_seconds())) from exc
+        return code
+
+    def get_live(self, user_id: UUID, purpose: CodePurpose) -> VerificationCode | None:
+        orm = VerificationCodeORM.objects.filter(user_id=user_id, purpose=purpose.value).first()
+        return _code_to_domain(orm) if orm else None
+
+    def reserve_attempt(self, code_id: UUID, limit: int) -> bool:
+        reserved = VerificationCodeORM.objects.filter(pk=code_id, attempts__lt=limit).update(
+            attempts=models.F("attempts") + 1
+        )
+        return reserved > 0
+
+    def delete(self, code_id: UUID) -> None:
+        VerificationCodeORM.objects.filter(pk=code_id).delete()
+
+    def delete_for(self, user_id: UUID, purpose: CodePurpose) -> None:
+        VerificationCodeORM.objects.filter(user_id=user_id, purpose=purpose.value).delete()

@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok, query_int
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.renderers import (
     account_to_view,
     balance_point_to_view,
     budget_to_view,
     category_to_view,
+    feed_item_to_view,
     transaction_to_view,
 )
 from core.interfaces.schemas import api_doc, many
@@ -23,6 +24,7 @@ from finances.application.dto import (
     CreateBudgetInput,
     CreateCategoryInput,
     CreateTransactionInput,
+    ListFeedInput,
     ListTransactionsInput,
     UpdateAccountInput,
     UpdateBudgetInput,
@@ -36,7 +38,7 @@ def _uuid(value: str | UUID) -> UUID:
 
 
 class AccountListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         many(sc.AccountOut), parameters=sc.INCLUDE_ARCHIVED, operation_id="api_v1_accounts_list"
@@ -59,7 +61,7 @@ class AccountListCreateView(BaseAPIView):
 
 
 class AccountDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.AccountOut, errors=sc.READ)
     def get(self, request: Request, pk: str):
@@ -81,7 +83,7 @@ class AccountDetailView(BaseAPIView):
 
 
 class AccountArchiveView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.AccountOut, request=None, errors=sc.READ)
     def post(self, request: Request, pk: str):
@@ -89,7 +91,7 @@ class AccountArchiveView(BaseAPIView):
 
 
 class AccountUnarchiveView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.AccountOut, request=None, errors=sc.READ)
     def post(self, request: Request, pk: str):
@@ -99,7 +101,7 @@ class AccountUnarchiveView(BaseAPIView):
 
 
 class AccountBalanceHistoryView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         many(sc.BalancePointOut),
@@ -116,7 +118,7 @@ class AccountBalanceHistoryView(BaseAPIView):
 
 
 class CategoryListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.CategoryOut))
     def get(self, request: Request):
@@ -131,7 +133,7 @@ class CategoryListCreateView(BaseAPIView):
 
 
 class CategoryDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.CategoryOut, request=UpdateCategoryInput, errors=sc.WRITE)
     def patch(self, request: Request, pk: str):
@@ -147,7 +149,7 @@ class CategoryDetailView(BaseAPIView):
 
 
 class TransactionListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         sc.TransactionPageOut,
@@ -179,8 +181,32 @@ class TransactionListCreateView(BaseAPIView):
         )
 
 
+class FeedView(BaseAPIView):
+    permission_classes = [IsVerified]
+
+    @api_doc(
+        sc.FeedPageOut,
+        parameters=sc.FEED_FILTERS,
+        errors=(401, 403, 422),
+        description=(
+            "Transactions together with goal contributions and debt openings and "
+            "repayments, newest first. Events are not counted by analytics or budgets."
+        ),
+    )
+    def get(self, request: Request):
+        fields = ListFeedInput.model_fields
+        data = self.parse(
+            ListFeedInput,
+            {k: v for k, v in request.query_params.items() if k in fields and v != ""},
+        )
+        page = container.list_feed().execute(request.user.id, data)
+        return ok(
+            {"items": [feed_item_to_view(i) for i in page.items], "next_cursor": page.next_cursor}
+        )
+
+
 class TransactionDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.TransactionOut, errors=sc.READ)
     def get(self, request: Request, pk: str):
@@ -203,7 +229,7 @@ class TransactionDetailView(BaseAPIView):
 
 
 class BudgetListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.BudgetOut), operation_id="api_v1_budgets_list")
     def get(self, request: Request):
@@ -216,7 +242,7 @@ class BudgetListCreateView(BaseAPIView):
 
 
 class BudgetDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.BudgetOut, errors=sc.READ)
     def get(self, request: Request, pk: str):

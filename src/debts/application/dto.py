@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from datetime import date as _date
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,8 +21,14 @@ class CreateDebtInput(BaseModel):
     direction: DebtDirection
     amount_minor: int = Field(gt=0)
     currency: str
-    due_date: date | None = None
+    due_date: _date | None = None
     note: str = Field(default="", max_length=2000)
+    #: The account the debt's money goes through: borrowed money comes in
+    #: (``i_owe``), lent money goes out (``owed_to_me``). Without it the
+    #: opening moves no balance.
+    account_id: UUID | None = None
+    #: Day of the opening; defaults to today.
+    date: _date | None = None
 
 
 class UpdateDebtInput(BaseModel):
@@ -53,6 +60,8 @@ class DebtDTO:
     is_closed: bool
     note: str
     created_at: datetime | None
+    account_id: UUID | None = None
+    opened_on: date | None = None
 
 
 @dataclass(frozen=True, slots=True)

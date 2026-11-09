@@ -173,6 +173,8 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "core.interfaces.exceptions.exception_handler",
+    # Endpoints that check or mail one-time codes (ScopedRateThrottle, per user).
+    "DEFAULT_THROTTLE_RATES": {"codes": env("CODES_THROTTLE_RATE", default="30/hour")},
 }
 
 # ---------------------------------------------------------------------------

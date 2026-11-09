@@ -53,9 +53,18 @@ from shared.domain.money import Money
 from shared.exceptions import ConflictError, ValidationError
 
 
-def _encode_cursor(tx: TransactionORM) -> str:
-    raw = f"{tx.date.isoformat()}|{tx.created_at.isoformat()}|{tx.id}"
+def encode_cursor(day: date, created_at: datetime, pk: UUID) -> str:
+    """Opaque cursor of a feed position ordered by (date, created_at, id), newest first."""
+    raw = f"{day.isoformat()}|{created_at.isoformat()}|{pk}"
     return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _encode_cursor(tx: TransactionORM) -> str:
+    return encode_cursor(tx.date, tx.created_at, tx.id)
+
+
+def decode_cursor(cursor: str) -> tuple[date, datetime, UUID]:
+    return _decode_cursor(cursor)
 
 
 def _decode_cursor(cursor: str) -> tuple[date, datetime, UUID]:
@@ -71,6 +80,10 @@ _TRUNC = {Granularity.DAY: TruncDay, Granularity.MONTH: TruncMonth, Granularity.
 
 #: Relations a rendered transaction needs, loaded in the same query.
 _LABEL_RELATIONS = ("account", "category", "transfer_to_account")
+
+
+def transaction_labels(tx: TransactionORM) -> TransactionLabels:
+    return _labels(tx)
 
 
 def _labels(tx: TransactionORM) -> TransactionLabels:

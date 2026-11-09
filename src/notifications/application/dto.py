@@ -15,6 +15,7 @@ class NotificationDTO:
     type: NotificationType
     subject: str
     amount_minor: int | None
+    currency: str
     percent: int | None
     title: str
     body: str

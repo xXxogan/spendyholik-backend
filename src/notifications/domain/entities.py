@@ -22,6 +22,8 @@ class Notification:
     type: NotificationType
     subject: str = ""
     amount_minor: int | None = None
+    #: Currency of ``amount_minor``.
+    currency: str = ""
     percent: int | None = None
     title: str = ""
     body: str = ""

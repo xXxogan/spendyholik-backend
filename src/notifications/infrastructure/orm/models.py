@@ -20,14 +20,25 @@ class Notification(models.Model):
     type = models.CharField(max_length=30, choices=_choices(NotificationType))
     subject = models.CharField(max_length=200, blank=True, default="")
     amount_minor = models.BigIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True, default="")
     percent = models.PositiveSmallIntegerField(null=True, blank=True)
     title = models.CharField(max_length=200, blank=True, default="")
     body = models.TextField(blank=True, default="")
     is_read = models.BooleanField(default=False)
+    # Makes "once per budget period / goal threshold / recurring run" hold
+    # even when two writes race.
+    dedupe_key = models.CharField(max_length=120, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=["user", "is_read"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "dedupe_key"],
+                condition=models.Q(dedupe_key__isnull=False),
+                name="uniq_notification_dedupe",
+            ),
         ]

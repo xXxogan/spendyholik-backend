@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import pytest
 from django.core import mail
 from rest_framework.test import APIClient
 
+from accounts.infrastructure.orm.models import User
 from finances.infrastructure.orm.models import Category
 from tests.factories import UserFactory
 
@@ -27,7 +29,9 @@ def _account(client, currency="RUB"):
 def _register(email="a@b.co"):
     client = APIClient()
     body = client.post(
-        "/api/v1/auth/register/", {"email": email, "password": PASSWORD}, format="json"
+        "/api/v1/auth/register/",
+        {"email": email, "password": PASSWORD, "personal_data_consent": True},
+        format="json",
     ).json()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {body['access']}")
     return client, body["refresh"]
@@ -128,11 +132,16 @@ class TestTokens:
         resp = api_client.post("/api/v1/auth/logout/", {"refresh_token": "garbage"}, format="json")
         assert resp.status_code == 401
 
-    def test_change_password_revokes_refresh_tokens(self):
+    def test_change_password_revokes_refresh_tokens(self, django_capture_on_commit_callbacks):
         client, refresh = _register()
+        User.objects.filter(email="a@b.co").update(email_verified=True)
+        mail.outbox.clear()
+        with django_capture_on_commit_callbacks(execute=True):
+            client.post("/api/v1/profile/password/code/", format="json")
+        code = re.search(r"\b\d{6}\b", mail.outbox[-1].body).group()
         resp = client.patch(
             "/api/v1/profile/password/",
-            {"old_password": PASSWORD, "new_password": "An0ther-Passw0rd"},
+            {"code": code, "new_password": "An0ther-Passw0rd"},
             format="json",
         )
         assert resp.status_code in (200, 204)
@@ -163,6 +172,8 @@ class TestPasswordReset:
             format="json",
         )
         assert resp.status_code == 200
+        # The link reached the mailbox, so the address counts as confirmed.
+        assert User.objects.get(email="reset@b.co").email_verified is True
         resp = api_client.post("/api/v1/auth/refresh/", {"refresh_token": refresh}, format="json")
         assert resp.status_code == 401
 

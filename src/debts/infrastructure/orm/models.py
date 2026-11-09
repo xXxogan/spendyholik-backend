@@ -27,6 +27,14 @@ class Debt(models.Model):
     is_closed = models.BooleanField(default=False)
     note = models.TextField(max_length=2000, blank=True, default="")
     created_at = models.DateTimeField(default=timezone.now, editable=False)
+    account = models.ForeignKey(
+        "finances.Account",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="opened_debts",
+    )
+    opened_on = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ("-is_closed", "due_date")
@@ -47,6 +55,7 @@ class DebtPayment(models.Model):
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3)
     date = models.DateField()
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
 
     class Meta:
         ordering = ("-date",)

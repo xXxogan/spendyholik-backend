@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from django.db import IntegrityError, transaction
+
 from notifications.application.ports import NotificationRepository
 from notifications.domain.entities import Notification
 from notifications.infrastructure.mappers import notification_to_domain, notification_to_orm
@@ -12,6 +14,16 @@ class DjangoNotificationRepository(NotificationRepository):
     def add(self, notification: Notification) -> Notification:
         notification_to_orm(notification).save(force_insert=True)
         return notification
+
+    def add_once(self, notification: Notification, key: str) -> bool:
+        orm = notification_to_orm(notification)
+        orm.dedupe_key = key
+        try:
+            with transaction.atomic():
+                orm.save(force_insert=True)
+        except IntegrityError:
+            return False
+        return True
 
     def list_for_user(self, user_id: UUID) -> list[Notification]:
         return [notification_to_domain(n) for n in NotificationORM.objects.filter(user_id=user_id)]

@@ -22,6 +22,8 @@ from finances.application.dto import (
     CreateBudgetInput,
     CreateCategoryInput,
     CreateTransactionInput,
+    FeedPageDTO,
+    ListFeedInput,
     ListTransactionsInput,
     TransactionDTO,
     TransactionLabels,
@@ -38,6 +40,8 @@ from finances.application.ports import (
     CategoryRepository,
     CurrencyTotals,
     ExchangeRateRepository,
+    FeedReader,
+    TransactionObserver,
     TransactionRepository,
 )
 from finances.domain.entities import Account, Budget, Category, ExchangeRate, Transaction
@@ -419,9 +423,11 @@ class CreateTransaction:
         accounts: AccountRepository,
         categories: CategoryRepository,
         transactions: TransactionRepository,
+        observer: TransactionObserver | None = None,
     ) -> None:
         self._guard = _TransactionGuard(accounts, categories, transactions)
         self._transactions = transactions
+        self._observer = observer
 
     def execute(self, user_id: UUID, data: CreateTransactionInput) -> TransactionDTO:
         account = self._guard.validate(
@@ -443,7 +449,10 @@ class CreateTransaction:
             title=data.title.strip(),
             transfer_to_account_id=data.transfer_to_account_id,
         )
-        return _transaction_dto(self._transactions.add(transaction))
+        saved = self._transactions.add(transaction)
+        if self._observer is not None:
+            self._observer.changed(user_id, None, saved)
+        return _transaction_dto(saved)
 
 
 class GetTransaction:
@@ -463,9 +472,11 @@ class UpdateTransaction:
         accounts: AccountRepository,
         categories: CategoryRepository,
         transactions: TransactionRepository,
+        observer: TransactionObserver | None = None,
     ) -> None:
         self._guard = _TransactionGuard(accounts, categories, transactions)
         self._transactions = transactions
+        self._observer = observer
 
     def execute(
         self, user_id: UUID, transaction_id: UUID, data: UpdateTransactionInput
@@ -492,16 +503,42 @@ class UpdateTransaction:
         )
         minor = tx.amount.to_minor_units() if data.amount_minor is None else data.amount_minor
         updated = replace(draft, amount=Money.from_minor_units(minor, account.currency.value))
-        return _transaction_dto(self._transactions.update(updated))
+        saved = self._transactions.update(updated)
+        if self._observer is not None:
+            self._observer.changed(user_id, tx, saved)
+        return _transaction_dto(saved)
 
 
 class DeleteTransaction:
-    def __init__(self, transactions: TransactionRepository) -> None:
+    def __init__(
+        self, transactions: TransactionRepository, observer: TransactionObserver | None = None
+    ) -> None:
         self._transactions = transactions
+        self._observer = observer
 
     def execute(self, user_id: UUID, transaction_id: UUID) -> None:
-        if not self._transactions.delete(transaction_id, user_id):
+        before = self._transactions.get_by_id(transaction_id, user_id)
+        if before is None or not self._transactions.delete(transaction_id, user_id):
             raise TransactionNotFoundError(transaction_id)
+        if self._observer is not None:
+            self._observer.changed(user_id, before, None)
+
+
+class ListFeed:
+    """Transactions with goal contributions and debt openings/repayments, newest first."""
+
+    def __init__(self, feed: FeedReader) -> None:
+        self._feed = feed
+
+    def execute(self, user_id: UUID, data: ListFeedInput) -> FeedPageDTO:
+        return self._feed.page(
+            user_id,
+            account_id=data.account_id,
+            date_from=data.date_from,
+            date_to=data.date_to,
+            cursor=data.cursor,
+            limit=data.limit,
+        )
 
 
 class ListTransactions:

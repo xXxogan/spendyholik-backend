@@ -110,15 +110,14 @@ class TestErrorCodes:
         assert resp.status_code == 422
         assert resp.json()["errors"] == {"date_from": "invalid"}
 
-    def test_wrong_password_is_a_field_error_not_a_401(self, auth_client):
+    def test_wrong_password_code_is_a_field_error_not_a_401(self, auth_client):
         resp = _patch(
             auth_client,
             "/api/v1/profile/password/",
-            {"old_password": "nope-nope", "new_password": "newpassword1"},
+            {"code": "000000", "new_password": "newpassword1"},
         )
         assert resp.status_code == 422
-        assert resp.json()["code"] == "wrong_password"
-        assert resp.json()["errors"] == {"old_password": "wrong_password"}
+        assert resp.json()["errors"] == {"code": "invalid_code"}
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +146,11 @@ class TestProfile:
     def test_name_and_email(self, auth_client, user):
         body = auth_client.get("/api/v1/profile/").json()
         assert body["email"] == user.email
-        resp = _patch(auth_client, "/api/v1/profile/", {"first_name": "Аня", "email": "an@ya.ru"})
+        resp = _patch(
+            auth_client,
+            "/api/v1/profile/",
+            {"first_name": "Аня", "email": "an@ya.ru", "current_password": "password123"},
+        )
         assert resp.status_code == 200
         assert (resp.json()["first_name"], resp.json()["email"]) == ("Аня", "an@ya.ru")
         user.refresh_from_db()
@@ -157,9 +160,13 @@ class TestProfile:
         _post(
             api_client,
             "/api/v1/auth/register/",
-            {"email": "taken@ya.ru", "password": "password123"},
+            {"email": "taken@ya.ru", "password": "password123", "personal_data_consent": True},
         )
-        resp = _patch(auth_client, "/api/v1/profile/", {"email": "taken@ya.ru"})
+        resp = _patch(
+            auth_client,
+            "/api/v1/profile/",
+            {"email": "taken@ya.ru", "current_password": "password123"},
+        )
         assert resp.status_code == 409
         assert resp.json()["errors"] == {"email": "email_already_taken"}
 

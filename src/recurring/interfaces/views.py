@@ -2,12 +2,12 @@
 
 from uuid import UUID
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.renderers import recurring_to_view
 from core.interfaces.schemas import api_doc, many
 from recurring.application.dto import (
@@ -22,7 +22,7 @@ def _uuid(value):
 
 
 class RecurringListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.RecurringOut))
     def get(self, request: Request):
@@ -39,7 +39,7 @@ class RecurringListCreateView(BaseAPIView):
 
 
 class RecurringDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.RecurringOut, request=UpdateRecurringInput, errors=sc.WRITE)
     def patch(self, request: Request, pk):
@@ -57,7 +57,7 @@ class RecurringDetailView(BaseAPIView):
 
 
 class RecurringToggleView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.RecurringOut, request=ToggleRecurringInput, errors=sc.WRITE)
     def post(self, request: Request, pk):

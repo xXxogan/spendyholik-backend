@@ -12,6 +12,7 @@ from finances.interfaces.views import (
     BudgetListCreateView,
     CategoryDetailView,
     CategoryListCreateView,
+    FeedView,
     TransactionDetailView,
     TransactionListCreateView,
 )
@@ -29,6 +30,7 @@ urlpatterns = [
         name="account-balance-history",
     ),
     path("transactions/", TransactionListCreateView.as_view(), name="transaction-list"),
+    path("feed/", FeedView.as_view(), name="feed"),
     path("transactions/<uuid:pk>/", TransactionDetailView.as_view(), name="transaction-detail"),
     path("categories/", CategoryListCreateView.as_view(), name="category-list"),
     path("categories/<uuid:pk>/", CategoryDetailView.as_view(), name="category-detail"),

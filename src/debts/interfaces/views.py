@@ -2,12 +2,12 @@
 
 from uuid import UUID
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 
 from core.interfaces import schemas as sc
 from core.interfaces.api import BaseAPIView, created, no_content, ok
 from core.interfaces.deps import container
+from core.interfaces.permissions import IsVerified
 from core.interfaces.renderers import debt_event_to_view, debt_to_view, money_to_view
 from core.interfaces.schemas import api_doc, many
 from debts.application.dto import CreateDebtInput, RepayDebtInput, UpdateDebtInput
@@ -18,7 +18,7 @@ def _uuid(value):
 
 
 class DebtListCreateView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(many(sc.DebtOut), operation_id="api_v1_debts_list")
     def get(self, request: Request):
@@ -31,7 +31,7 @@ class DebtListCreateView(BaseAPIView):
 
 
 class DebtDetailView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.DebtOut, errors=sc.READ)
     def get(self, request: Request, pk):
@@ -49,7 +49,7 @@ class DebtDetailView(BaseAPIView):
 
 
 class DebtRepayView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(sc.DebtPaymentOut, request=RepayDebtInput, status=201, errors=sc.WRITE)
     def post(self, request: Request, pk):
@@ -67,7 +67,7 @@ class DebtRepayView(BaseAPIView):
 
 
 class DebtHistoryView(BaseAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsVerified]
 
     @api_doc(
         many(sc.DebtEventOut), errors=sc.READ, description="Opening and repayments, newest first."

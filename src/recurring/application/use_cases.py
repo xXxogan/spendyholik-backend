@@ -12,6 +12,7 @@ from dateutil.relativedelta import relativedelta
 from finances.application.ports import (
     AccountRepository,
     CategoryRepository,
+    TransactionObserver,
     TransactionRepository,
 )
 from finances.application.use_cases import account_refs, category_ref, require_category
@@ -272,11 +273,13 @@ class RunDueRecurring:
         transactions: TransactionRepository,
         uow: UnitOfWork,
         clock: Clock,
+        observer: TransactionObserver | None = None,
     ) -> None:
         self._recurring = recurring
         self._transactions = transactions
         self._uow = uow
         self._clock = clock
+        self._observer = observer
 
     def execute(self) -> RunDueRecurringResultDTO:
         today = self._clock.now().date()
@@ -303,7 +306,7 @@ class RunDueRecurring:
             if self._transactions.exists_for_source(template.user_id, template.id, on):
                 existing += 1
                 continue
-            self._transactions.add(
+            saved = self._transactions.add(
                 Transaction(
                     user_id=template.user_id,
                     account_id=template.account_id,
@@ -315,6 +318,8 @@ class RunDueRecurring:
                     recurring_source_id=template.id,
                 )
             )
+            if self._observer is not None:
+                self._observer.changed(template.user_id, None, saved)
             created += 1
         self._recurring.update(replace(template, next_run=next_run))
         return created, existing
