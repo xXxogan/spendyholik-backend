@@ -23,7 +23,6 @@ from accounts.application.use_cases import (
 )
 from accounts.infrastructure.gateways import (
     CeleryEmailCodeSender,
-    DjangoCachePasswordResetGateway,
     DjangoPasswordHasher,
     SimpleJWTTokenService,
     SocialAuthIdentityProvider,
@@ -162,14 +161,11 @@ class Container:
         )
 
     def request_password_reset(self) -> RequestPasswordReset:
-        return RequestPasswordReset(DjangoUserRepository(), DjangoCachePasswordResetGateway())
+        return RequestPasswordReset(DjangoUserRepository(), self._codes())
 
     def confirm_password_reset(self) -> ConfirmPasswordReset:
         return ConfirmPasswordReset(
-            DjangoUserRepository(),
-            DjangoPasswordHasher(),
-            DjangoCachePasswordResetGateway(),
-            SimpleJWTTokenService(),
+            DjangoUserRepository(), DjangoPasswordHasher(), SimpleJWTTokenService(), self._codes()
         )
 
     def get_profile(self) -> GetProfile:

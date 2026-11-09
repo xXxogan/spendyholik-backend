@@ -110,8 +110,15 @@ class LogoutView(BaseAPIView):
 
 class RequestPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
 
-    @api_doc(sc.PasswordResetOut, request=RequestPasswordResetInput, errors=(422,))
+    @api_doc(
+        sc.PasswordResetOut,
+        request=RequestPasswordResetInput,
+        errors=(429,),
+        description="Mails a 6-digit reset code; the answer is the same for any email.",
+    )
     def post(self, request: Request):
         data = self.parse(RequestPasswordResetInput, request.data)
         result = container.request_password_reset().execute(data)
@@ -120,8 +127,15 @@ class RequestPasswordResetView(BaseAPIView):
 
 class ConfirmPasswordResetView(BaseAPIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "codes"
 
-    @api_doc(sc.DetailOut, request=ConfirmPasswordResetInput, errors=(422,))
+    @api_doc(
+        sc.DetailOut,
+        request=ConfirmPasswordResetInput,
+        errors=(422, 429),
+        description="Sets the new password with the mailed code; revokes every session.",
+    )
     def post(self, request: Request):
         data = self.parse(ConfirmPasswordResetInput, request.data)
         container.confirm_password_reset().execute(data)

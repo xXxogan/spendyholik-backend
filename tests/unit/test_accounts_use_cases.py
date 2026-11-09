@@ -33,7 +33,6 @@ from accounts.domain.exceptions import (
     EmailAlreadyVerifiedError,
     InvalidCodeError,
     InvalidCredentialsError,
-    PasswordResetTokenInvalidError,
     ProfileNotFoundError,
     ResendTooSoonError,
     WrongPasswordError,
@@ -44,7 +43,6 @@ from tests.fakes import (
     FakeAuthTokenService,
     FakeClock,
     FakePasswordHasher,
-    FakePasswordResetGateway,
     FakeSocialIdentityProvider,
     FakeUnitOfWork,
     InMemoryProfileRepository,
@@ -284,30 +282,52 @@ class TestEmailConfirmation:
 
 
 class TestPasswordReset:
-    def test_request_and_confirm(self):
+    def _reset(self, users, hasher, tokens, code, email="a@b.co"):
+        ConfirmPasswordReset(users, hasher, tokens, CODES).execute(
+            ConfirmPasswordResetInput(email=email, code=code, new_password="newpass456")
+        )
+
+    def test_request_and_confirm_with_the_mailed_code(self):
         users, profiles, hasher, tokens = _registrar()
-        _register(users, profiles, hasher, tokens)
-        gateway = FakePasswordResetGateway()
-        requested = RequestPasswordReset(users, gateway).execute(
-            RequestPasswordResetInput(email="a@b.co")
+        result = _register(users, profiles, hasher, tokens)
+        requested = RequestPasswordReset(users, CODES).execute(
+            RequestPasswordResetInput(email="A@b.co")
         )
         assert requested.acknowledged is True
-        token = next(iter(gateway._tokens))
-        ConfirmPasswordReset(users, hasher, gateway, tokens).execute(
-            ConfirmPasswordResetInput(token=token, new_password="newpass456")
-        )
+        email, purpose, code = SENDER.sent[-1]
+        assert (email, purpose, len(code)) == ("a@b.co", CodePurpose.RESET_PASSWORD, 6)
+        self._reset(users, hasher, tokens, code)
         LoginUser(users, hasher, tokens).execute(
             LoginUserInput(email="a@b.co", password="newpass456")
         )
+        # The code reached the mailbox, so the address is confirmed too.
+        assert users.get_by_id(result.user.id).email_verified is True
 
-    def test_confirm_with_bad_token_raises(self):
+    def test_wrong_code_raises(self):
         users, profiles, hasher, tokens = _registrar()
         _register(users, profiles, hasher, tokens)
-        gateway = FakePasswordResetGateway()
-        with pytest.raises(PasswordResetTokenInvalidError):
-            ConfirmPasswordReset(users, hasher, gateway, tokens).execute(
-                ConfirmPasswordResetInput(token="bogus", new_password="newpass456")
-            )
+        RequestPasswordReset(users, CODES).execute(RequestPasswordResetInput(email="a@b.co"))
+        with pytest.raises(InvalidCodeError):
+            self._reset(users, hasher, tokens, "000000x")
+
+    def test_unknown_email_looks_like_a_wrong_code(self):
+        users, profiles, hasher, tokens = _registrar()
+        with pytest.raises(InvalidCodeError):
+            self._reset(users, hasher, tokens, "123456", email="nobody@b.co")
+        with pytest.raises(InvalidCodeError):
+            self._reset(users, hasher, tokens, "123456", email="not-an-email")
+
+    def test_request_answers_the_same_for_any_email(self):
+        users, profiles, hasher, tokens = _registrar()
+        _register(users, profiles, hasher, tokens)
+        request = RequestPasswordReset(users, CODES)
+        sent_before = len(SENDER.sent)
+        assert request.execute(RequestPasswordResetInput(email="nobody@b.co")).acknowledged
+        assert request.execute(RequestPasswordResetInput(email="broken")).acknowledged
+        assert len(SENDER.sent) == sent_before
+        request.execute(RequestPasswordResetInput(email="a@b.co"))
+        # Within the cooldown: still "acknowledged", no error that would reveal the account.
+        assert request.execute(RequestPasswordResetInput(email="a@b.co")).acknowledged
 
 
 class TestSocialLogin:

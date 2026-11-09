@@ -117,22 +117,6 @@ class AuthTokenService(ABC):
         """Invalidate every outstanding refresh token of the user."""
 
 
-class PasswordResetGateway(ABC):
-    """Generates one-time reset tokens and delivers them (usually by email)."""
-
-    @abstractmethod
-    def issue_token(self, user: User) -> str: ...
-
-    @abstractmethod
-    def send_token(self, user: User, token: str) -> None: ...
-
-    @abstractmethod
-    def resolve_token(self, token: str) -> UUID | None: ...
-
-    @abstractmethod
-    def invalidate_token(self, token: str) -> None: ...
-
-
 class SocialIdentityProvider(ABC):
     """Exchanges an external OAuth credential for a verified identity."""
 

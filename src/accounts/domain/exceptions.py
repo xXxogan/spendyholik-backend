@@ -31,11 +31,6 @@ class ProfileNotFoundError(EntityNotFoundError):
         super().__init__("Profile", identifier)
 
 
-class PasswordResetTokenInvalidError(ValidationError):
-    code = "password_reset_token_invalid"
-    default_detail = "The password reset token is invalid or expired."
-
-
 class InvalidTokenError(ValidationError):
     code = "token_invalid"
     http_status = 401

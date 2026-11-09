@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from contextlib import suppress
 from dataclasses import replace
 from uuid import UUID
 
@@ -26,7 +27,6 @@ from accounts.application.ports import (
     AuthTokenService,
     CodeSender,
     PasswordHasher,
-    PasswordResetGateway,
     ProfileRepository,
     SocialIdentityProvider,
     TokenPair,
@@ -38,9 +38,11 @@ from accounts.domain.enums import CodePurpose
 from accounts.domain.exceptions import (
     EmailAlreadyTakenError,
     EmailAlreadyVerifiedError,
+    InvalidCodeError,
     InvalidCredentialsError,
-    PasswordResetTokenInvalidError,
     ProfileNotFoundError,
+    ResendTooSoonError,
+    TooManyCodesError,
     UserNotFoundError,
     WrongPasswordError,
 )
@@ -49,7 +51,7 @@ from shared.application.patch import apply_patch
 from shared.application.ports import UnitOfWork
 from shared.domain.clock import Clock
 from shared.domain.currency_code import CurrencyCode
-from shared.exceptions import ValidationError
+from shared.exceptions import DomainError, ValidationError
 
 
 def _user_dto(user: User) -> UserDTO:
@@ -338,44 +340,54 @@ class ResendEmailCode:
 
 
 class RequestPasswordReset:
-    def __init__(self, user_repo: UserRepository, reset_gateway: PasswordResetGateway) -> None:
+    """Mail a reset code; the answer is the same whether the email exists or not."""
+
+    def __init__(self, user_repo: UserRepository, codes: VerificationCodes) -> None:
         self._users = user_repo
-        self._gateway = reset_gateway
+        self._codes = codes
 
     def execute(self, data: RequestPasswordResetInput) -> PasswordResetRequestedDTO:
-        # Always acknowledge to avoid leaking which emails are registered.
-        user = self._users.get_by_email(Email(data.email))
+        try:
+            email = Email(data.email)
+        except DomainError:
+            email = None
+        user = self._users.get_by_email(email) if email else None
         if user is not None:
-            self._gateway.send_token(user, self._gateway.issue_token(user))
+            # Answering differently would reveal that the address is registered.
+            with suppress(ResendTooSoonError, TooManyCodesError):
+                self._codes.issue(user, CodePurpose.RESET_PASSWORD)
         return PasswordResetRequestedDTO(acknowledged=True)
 
 
 class ConfirmPasswordReset:
+    """Set a new password with the mailed code; every session is revoked."""
+
     def __init__(
         self,
         user_repo: UserRepository,
         password_hasher: PasswordHasher,
-        reset_gateway: PasswordResetGateway,
         token_service: AuthTokenService,
+        codes: VerificationCodes,
     ) -> None:
         self._users = user_repo
         self._hasher = password_hasher
-        self._gateway = reset_gateway
         self._tokens = token_service
+        self._codes = codes
 
     def execute(self, data: ConfirmPasswordResetInput) -> None:
-        user_id = self._gateway.resolve_token(data.token)
-        if user_id is None:
-            raise PasswordResetTokenInvalidError
-        user = self._users.get_by_id(user_id)
+        try:
+            user = self._users.get_by_email(Email(data.email))
+        except DomainError:
+            user = None
         if user is None:
-            raise PasswordResetTokenInvalidError
-        self._gateway.invalidate_token(data.token)
-        self._users.set_password(user_id, self._hasher.hash(data.new_password))
+            # Same error as a wrong code: do not tell which emails exist.
+            raise InvalidCodeError
+        self._codes.verify(user.id, CodePurpose.RESET_PASSWORD, data.code)
+        self._users.set_password(user.id, self._hasher.hash(data.new_password))
         if not user.email_verified:
-            # The reset link reached the mailbox: that proves the address too.
+            # The code reached the mailbox: that proves the address too.
             self._users.update(replace(user, email_verified=True))
-        self._tokens.revoke_all(user_id)
+        self._tokens.revoke_all(user.id)
 
 
 class WipeUserData:

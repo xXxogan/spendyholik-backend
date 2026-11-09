@@ -150,19 +150,23 @@ class TestTokens:
 
 
 class TestPasswordReset:
-    def test_reset_token_is_emailed_and_revokes_sessions(self, api_client):
+    def test_reset_code_is_emailed_and_revokes_sessions(
+        self, api_client, django_capture_on_commit_callbacks
+    ):
         _, refresh = _register("reset@b.co")
-        resp = api_client.post(
-            "/api/v1/auth/password/reset/", {"email": "reset@b.co"}, format="json"
-        )
+        mail.outbox.clear()  # the registration code
+        with django_capture_on_commit_callbacks(execute=True):
+            resp = api_client.post(
+                "/api/v1/auth/password/reset/", {"email": "reset@b.co"}, format="json"
+            )
         assert resp.status_code in (200, 202)
         assert len(mail.outbox) == 1
         assert mail.outbox[0].to == ["reset@b.co"]
-        token = mail.outbox[0].body.split("\n\n")[1].strip()
+        code = re.search(r"\b\d{6}\b", mail.outbox[0].body).group()
 
         resp = api_client.post(
             "/api/v1/auth/password/confirm/",
-            {"token": token, "new_password": "An0ther-Passw0rd"},
+            {"email": "reset@b.co", "code": code, "new_password": "An0ther-Passw0rd"},
             format="json",
         )
         assert resp.status_code in (200, 204)

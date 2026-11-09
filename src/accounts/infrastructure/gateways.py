@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
 from django.contrib.auth.hashers import check_password, make_password
-from django.core.cache import cache
-from django.core.mail import send_mail
 from django.db import transaction
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
@@ -18,7 +15,6 @@ from accounts.application.ports import (
     AuthTokenService,
     CodeSender,
     PasswordHasher,
-    PasswordResetGateway,
     SocialIdentity,
     SocialIdentityProvider,
     TokenPair,
@@ -85,39 +81,6 @@ class SimpleJWTTokenService(AuthTokenService):
         )
 
 
-class DjangoCachePasswordResetGateway(PasswordResetGateway):
-    """Stores one-time reset tokens in the cache (Redis) with a TTL."""
-
-    timeout_seconds = 60 * 60  # 1 hour
-
-    def _key(self, token: str) -> str:
-        return f"password-reset:{token}"
-
-    def issue_token(self, user: User) -> str:
-        token = secrets.token_urlsafe(32)
-        cache.set(self._key(token), str(user.id), timeout=self.timeout_seconds)
-        return token
-
-    def send_token(self, user: User, token: str) -> None:
-        send_mail(
-            subject="SpendyHolik: password reset",
-            message=(
-                "Use this code to reset your SpendyHolik password "
-                f"(valid for {self.timeout_seconds // 60} minutes):\n\n{token}\n\n"
-                "If you did not request a reset, ignore this email."
-            ),
-            from_email=None,
-            recipient_list=[user.email.value],
-        )
-
-    def resolve_token(self, token: str) -> UUID | None:
-        value = cache.get(self._key(token))
-        return UUID(value) if value else None
-
-    def invalidate_token(self, token: str) -> None:
-        cache.delete(self._key(token))
-
-
 class SocialAuthIdentityProvider(SocialIdentityProvider):
     """Exchanges OAuth credentials via social-auth backends.
 
@@ -136,6 +99,11 @@ _CODE_MAIL = {
         "SpendyHolik: код подтверждения почты",
         "Ваш код подтверждения почты: {code}\n\nКод действует {ttl} мин. "
         "Если вы не регистрировались в SpendyHolik, просто проигнорируйте это письмо.",
+    ),
+    CodePurpose.RESET_PASSWORD: (
+        "SpendyHolik: код для сброса пароля",
+        "Ваш код для сброса пароля: {code}\n\nКод действует {ttl} мин. "
+        "Если вы не запрашивали сброс, просто проигнорируйте это письмо: пароль не изменится.",
     ),
     CodePurpose.CHANGE_PASSWORD: (
         "SpendyHolik: код для смены пароля",

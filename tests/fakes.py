@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -13,7 +12,6 @@ from accounts.application.ports import (
     AuthTokenService,
     CodeSender,
     PasswordHasher,
-    PasswordResetGateway,
     ProfileRepository,
     SocialIdentity,
     SocialIdentityProvider,
@@ -157,26 +155,6 @@ class FakeAuthTokenService(AuthTokenService):
 
     def revoke_all(self, user_id: UUID) -> None:
         self.revoked_users.add(user_id)
-
-
-class FakePasswordResetGateway(PasswordResetGateway):
-    def __init__(self) -> None:
-        self._tokens: dict[str, UUID] = {}
-        self.sent: list[tuple[UUID, str]] = []
-
-    def issue_token(self, user: User) -> str:
-        token = secrets.token_urlsafe(16)
-        self._tokens[token] = user.id
-        return token
-
-    def send_token(self, user: User, token: str) -> None:
-        self.sent.append((user.id, token))
-
-    def resolve_token(self, token: str) -> UUID | None:
-        return self._tokens.get(token)
-
-    def invalidate_token(self, token: str) -> None:
-        self._tokens.pop(token, None)
 
 
 class FakeSocialIdentityProvider(SocialIdentityProvider):

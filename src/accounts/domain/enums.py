@@ -14,3 +14,4 @@ class CodePurpose(StrEnum):
 
     VERIFY_EMAIL = "verify_email"
     CHANGE_PASSWORD = "change_password"
+    RESET_PASSWORD = "reset_password"
